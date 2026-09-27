@@ -452,7 +452,7 @@ const styles = `
     flex-direction: column;
     align-items: center;
     gap: 3px;
-    padding: 16px 0 10px;
+    padding: 10px 0 8px;
     background: none;
     border: none;
     color: rgba(243,231,208,0.55);
@@ -1224,7 +1224,7 @@ export default function FamilyLedger() {
       <svg width="0" height="0" style={{ position: "absolute" }}>
         <defs>
           <filter id="grainLeather" x="-2%" y="-2%" width="104%" height="104%">
-            <feTurbulence type="fractalNoise" baseFrequency="0.3" numOctaves="4" seed="11" stitchTiles="stitch" result="n" />
+            <feTurbulence type="fractalNoise" baseFrequency="0.6" numOctaves="4" seed="11" stitchTiles="stitch" result="n" />
             <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0.6 0.6 0.6 0 0" />
           </filter>
           <filter id="grainPaper" x="-2%" y="-2%" width="104%" height="104%">
@@ -1701,7 +1701,7 @@ export default function FamilyLedger() {
         <div className="fl-grain fl-grain-leather"></div>
         <div
           className="fl-z1"
-          style={{ display: "flex", width: "100%", padding: "8px 6px calc(12px + env(safe-area-inset-bottom, 0px))" }}
+          style={{ display: "flex", width: "100%", padding: "6px 6px calc(8px + env(safe-area-inset-bottom, 0px))" }}
         >
           <button
             className={"fl-navbtn " + (view === "dashboard" ? "active" : "")}
