@@ -349,7 +349,8 @@ const styles = `
     --line: #C9BFA3;
     max-width: 480px;
     margin: 0 auto;
-    min-height: 100vh;
+    height: 100vh;
+    height: 100dvh;
     background: var(--paper);
     color: var(--ink);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -391,13 +392,13 @@ const styles = `
   }
 
   .fl-topbar {
-    padding: 20px 20px 14px;
+    padding: calc(20px + env(safe-area-inset-top, 0px)) 20px 14px;
     position: relative;
     z-index: 1;
   }
   .fl-topbar-rivets {
     position: absolute;
-    top: 18px;
+    top: calc(18px + env(safe-area-inset-top, 0px));
     right: 20px;
     display: flex;
     gap: 6px;
@@ -429,15 +430,20 @@ const styles = `
 
   .fl-content {
     flex: 1;
-    padding: 16px 16px 90px;
+    min-height: 0;
+    padding: 16px 16px calc(90px + env(safe-area-inset-bottom, 0px));
     overflow-y: auto;
     position: relative;
     z-index: 1;
   }
 
   .fl-bottomnav {
-    position: sticky;
+    position: fixed;
     bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100%;
+    max-width: 480px;
     z-index: 1;
   }
   .fl-navbtn {
@@ -716,7 +722,7 @@ const styles = `
 
   .fl-toast {
     position: fixed;
-    bottom: 74px;
+    bottom: calc(74px + env(safe-area-inset-bottom, 0px));
     left: 50%;
     transform: translateX(-50%);
     background: var(--leather-dk);
@@ -1693,7 +1699,10 @@ export default function FamilyLedger() {
 
       <div className="fl-bottomnav fl-leather fl-stitch-top">
         <div className="fl-grain fl-grain-leather"></div>
-        <div className="fl-z1" style={{ display: "flex", width: "100%", padding: "8px 6px 12px" }}>
+        <div
+          className="fl-z1"
+          style={{ display: "flex", width: "100%", padding: "8px 6px calc(12px + env(safe-area-inset-bottom, 0px))" }}
+        >
           <button
             className={"fl-navbtn " + (view === "dashboard" ? "active" : "")}
             onClick={() => setView("dashboard")}
