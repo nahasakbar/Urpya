@@ -331,6 +331,12 @@ function simulateStatusQuo(loans, maxMonths = 600) {
 const styles = `
   @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&display=swap');
 
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #3A2717;
+  }
+
   .fl-shell {
     --ink: #1B2A4A;
     --paper: #EDE4CE;
@@ -348,15 +354,17 @@ const styles = `
     --muted: #6B6455;
     --line: #C9BFA3;
     max-width: 480px;
-    margin: 0 auto;
-    height: 100vh;
-    height: 100dvh;
+    width: 100%;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
     background: var(--paper);
     color: var(--ink);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     display: flex;
     flex-direction: column;
-    position: relative;
     overflow: hidden;
   }
   .fl-shell * { box-sizing: border-box; }
@@ -1307,39 +1315,39 @@ export default function FamilyLedger() {
                     <div className="fl-progress-fill" style={{ width: (pct * 100).toFixed(1) + "%" }} />
                   </div>
                   <p className="fl-card-sub">of {fmt(l.totalAmount)} total</p>
-                  {l.protectFromGrowth && (
-                    <div style={{ marginTop: 8 }}>
-                      <span className="fl-chip chip-blue">protected</span>
+                  {(l.protectFromGrowth ||
+                    l.isPaidThisMonth ||
+                    l.isOverdue ||
+                    l.isDueSoon ||
+                    l.missedMonths.length > 0) && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                      {l.protectFromGrowth && <span className="fl-chip chip-blue">protected</span>}
+                      {l.isPaidThisMonth && (
+                        <span className="fl-chip chip-green">
+                          <Check size={12} /> Paid {monthKeyShort(asOfKey)}
+                        </span>
+                      )}
+                      {l.isOverdue && (
+                        <span className="fl-overdue" style={{ marginTop: 0 }}>
+                          <AlertCircle size={12} /> Payment overdue for {monthKeyLabel(asOfKey)}
+                        </span>
+                      )}
+                      {l.isDueSoon && (
+                        <span className="fl-chip chip-grey">
+                          {l.daysUntilDue === 0
+                            ? "Due today"
+                            : `Due in ${l.daysUntilDue} day${l.daysUntilDue === 1 ? "" : "s"}`}
+                        </span>
+                      )}
+                      {l.missedMonths.length > 0 && (
+                        <span className="fl-overdue" style={{ marginTop: 0 }}>
+                          <AlertCircle size={12} />{" "}
+                          {l.missedMonths.length === 1
+                            ? `Missed ${monthKeyShort(l.missedMonths[0].key)}`
+                            : `${l.missedMonths.length} months missed`}
+                        </span>
+                      )}
                     </div>
-                  )}
-                  {l.isPaidThisMonth && (
-                    <div style={{ marginTop: 8 }}>
-                      <span className="fl-chip chip-green">
-                        <Check size={12} /> Paid {monthKeyShort(asOfKey)}
-                      </span>
-                    </div>
-                  )}
-                  {l.isOverdue && (
-                    <p className="fl-overdue">
-                      <AlertCircle size={12} /> Payment overdue for {monthKeyLabel(asOfKey)}
-                    </p>
-                  )}
-                  {l.isDueSoon && (
-                    <div style={{ marginTop: 8 }}>
-                      <span className="fl-chip chip-grey">
-                        {l.daysUntilDue === 0
-                          ? "Due today"
-                          : `Due in ${l.daysUntilDue} day${l.daysUntilDue === 1 ? "" : "s"}`}
-                      </span>
-                    </div>
-                  )}
-                  {l.missedMonths.length > 0 && (
-                    <p className="fl-overdue">
-                      <AlertCircle size={12} />{" "}
-                      {l.missedMonths.length === 1
-                        ? `Missed ${monthKeyShort(l.missedMonths[0].key)}`
-                        : `${l.missedMonths.length} months missed`}
-                    </p>
                   )}
                 </div>
               );
