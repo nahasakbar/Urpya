@@ -431,7 +431,7 @@ const styles = `
   .fl-content {
     flex: 1;
     min-height: 0;
-    padding: 16px 16px calc(90px + env(safe-area-inset-bottom, 0px));
+    padding: 16px 16px calc(74px + env(safe-area-inset-bottom, 0px));
     overflow-y: auto;
     position: relative;
     z-index: 1;
@@ -451,8 +451,8 @@ const styles = `
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 3px;
-    padding: 10px 0 8px;
+    gap: 2px;
+    padding: 16px 0 6px;
     background: none;
     border: none;
     color: rgba(243,231,208,0.55);
@@ -564,9 +564,22 @@ const styles = `
     letter-spacing: 0.02em;
     padding: 2px 8px;
     border-radius: 20px;
-    background: rgba(176,138,62,0.14);
-    color: var(--brass);
-    border: 1px solid rgba(176,138,62,0.3);
+    border: 1px solid transparent;
+  }
+  .fl-chip.chip-grey {
+    background: rgba(107,100,85,0.14);
+    color: var(--muted);
+    border-color: rgba(107,100,85,0.3);
+  }
+  .fl-chip.chip-green {
+    background: rgba(47,93,69,0.12);
+    color: var(--forest);
+    border-color: rgba(47,93,69,0.28);
+  }
+  .fl-chip.chip-blue {
+    background: rgba(27,42,74,0.10);
+    color: var(--ink);
+    border-color: rgba(27,42,74,0.24);
   }
 
   .fl-section-title {
@@ -1296,12 +1309,12 @@ export default function FamilyLedger() {
                   <p className="fl-card-sub">of {fmt(l.totalAmount)} total</p>
                   {l.protectFromGrowth && (
                     <div style={{ marginTop: 8 }}>
-                      <span className="fl-chip">protected</span>
+                      <span className="fl-chip chip-blue">protected</span>
                     </div>
                   )}
                   {l.isPaidThisMonth && (
                     <div style={{ marginTop: 8 }}>
-                      <span className="fl-chip">
+                      <span className="fl-chip chip-green">
                         <Check size={12} /> Paid {monthKeyShort(asOfKey)}
                       </span>
                     </div>
@@ -1313,7 +1326,7 @@ export default function FamilyLedger() {
                   )}
                   {l.isDueSoon && (
                     <div style={{ marginTop: 8 }}>
-                      <span className="fl-chip">
+                      <span className="fl-chip chip-grey">
                         {l.daysUntilDue === 0
                           ? "Due today"
                           : `Due in ${l.daysUntilDue} day${l.daysUntilDue === 1 ? "" : "s"}`}
@@ -1356,7 +1369,7 @@ export default function FamilyLedger() {
                     </div>
                     {l.protectFromGrowth && (
                       <div style={{ marginTop: 5 }}>
-                        <span className="fl-chip">protected</span>
+                        <span className="fl-chip chip-blue">protected</span>
                       </div>
                     )}
                   </div>
@@ -1528,7 +1541,7 @@ export default function FamilyLedger() {
                         </div>
                         {l.protectFromGrowth && (
                           <div style={{ marginTop: 5 }}>
-                            <span className="fl-chip">protected</span>
+                            <span className="fl-chip chip-blue">protected</span>
                           </div>
                         )}
                       </div>
@@ -1701,14 +1714,14 @@ export default function FamilyLedger() {
         <div className="fl-grain fl-grain-leather"></div>
         <div
           className="fl-z1"
-          style={{ display: "flex", width: "100%", padding: "6px 6px calc(8px + env(safe-area-inset-bottom, 0px))" }}
+          style={{ display: "flex", width: "100%", padding: "4px 6px calc(6px + env(safe-area-inset-bottom, 0px))" }}
         >
           <button
             className={"fl-navbtn " + (view === "dashboard" ? "active" : "")}
             onClick={() => setView("dashboard")}
           >
             <div className="fl-ribbon"><div className="fl-ribbon-grain"></div></div>
-            <Home size={18} />
+            <Home size={16} />
             Dashboard
           </button>
           <button
@@ -1716,7 +1729,7 @@ export default function FamilyLedger() {
             onClick={() => setView("loans")}
           >
             <div className="fl-ribbon"><div className="fl-ribbon-grain"></div></div>
-            <Landmark size={18} />
+            <Landmark size={16} />
             Loans
           </button>
           <button
@@ -1724,7 +1737,7 @@ export default function FamilyLedger() {
             onClick={() => setView("strategy")}
           >
             <div className="fl-ribbon"><div className="fl-ribbon-grain"></div></div>
-            <Target size={18} />
+            <Target size={16} />
             Strategy
           </button>
           <button
@@ -1732,7 +1745,7 @@ export default function FamilyLedger() {
             onClick={() => setView("people")}
           >
             <div className="fl-ribbon"><div className="fl-ribbon-grain"></div></div>
-            <Users size={18} />
+            <Users size={16} />
             People
           </button>
         </div>
