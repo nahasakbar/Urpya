@@ -224,6 +224,80 @@ function getSuggestedMonth(lender, entriesMap, asOfKey) {
   return asOfKey;
 }
 
+// ---- Repayment plans ----
+// Some lenders don't quote an interest rate: they hand over an amount, agree a
+// larger total to repay, and set a monthly amount that rises over a term. Such
+// a debt is saved as a no-interest ("fixed") debt whose totalAmount is the
+// total to repay, plus repaymentPlan: { received, amounts }, where amounts[i]
+// is what's due in month i of the term (month 0 = termStart, or startMonth if
+// unset). The balance is simply total to repay minus payments; paying early
+// never shrinks the total.
+
+// Evenly rising amounts: starts at `first` and goes up by the same step each
+// month so all `months` payments add up to exactly `total`. Rounded to whole
+// rupees, with the last month absorbing the rounding. Null if impossible (bad
+// inputs, or it would need a negative payment).
+function spreadPlanAmounts(total, first, months) {
+  if (!(total > 0) || !(first >= 0) || !(months >= 1)) return null;
+  if (months === 1) return [Math.round(total)];
+  const step = (total - months * first) / ((months * (months - 1)) / 2);
+  const amounts = [];
+  for (let i = 0; i < months - 1; i++) amounts.push(Math.round(first + i * step));
+  amounts.push(Math.round(total - amounts.reduce((s, v) => s + v, 0)));
+  return amounts.some((a) => a < 0) ? null : amounts;
+}
+
+// What the plan says is due in a given month (0 outside the plan).
+function planDueFor(lender, key) {
+  const plan = lender.repaymentPlan;
+  if (!plan) return 0;
+  const i = monthsBetween(lender.termStart || lender.startMonth, key);
+  return i >= 0 && i < plan.amounts.length ? plan.amounts[i] : 0;
+}
+
+// What's due each month from `fromKey` to the plan's last month (empty once
+// the plan has ended).
+function upcomingPlanAmounts(lender, fromKey) {
+  const plan = lender.repaymentPlan;
+  if (!plan) return [];
+  const end = monthKeyAdd(lender.termStart || lender.startMonth, plan.amounts.length - 1);
+  const out = [];
+  for (let k = fromKey; monthsBetween(k, end) >= 0; k = monthKeyAdd(k, 1)) out.push(planDueFor(lender, k));
+  return out;
+}
+
+// How far payments trail the plan: everything due before this month minus
+// everything paid before it. The current month isn't counted until it's over.
+function planShortfall(lender, rows, asOfKey) {
+  let due = 0;
+  let paid = 0;
+  rows.forEach((r) => {
+    if (r.key < asOfKey) {
+      due += planDueFor(lender, r.key);
+      paid += r.totalPaid;
+    }
+  });
+  return Math.max(due - paid, 0);
+}
+
+// The yearly interest rate an ordinary loan would need to cost the same, for
+// comparing a plan with other debts: the monthly rate at which the payments
+// (the first one a month after the money arrives) exactly repay what was
+// received, times 12. Display only. Null when the plan charges nothing.
+function planYearlyRate(received, amounts) {
+  const total = amounts.reduce((s, v) => s + v, 0);
+  if (!(received > 0) || total <= received) return null;
+  const presentValue = (r) => amounts.reduce((s, p, i) => s + p / Math.pow(1 + r, i + 1), 0);
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 100; i++) {
+    const mid = (lo + hi) / 2;
+    if (presentValue(mid) > received) lo = mid;
+    else hi = mid;
+  }
+  return ((lo + hi) / 2) * 12;
+}
+
 function monthsLabel(m) {
   if (m == null) return "—";
   if (m < 1) return "paid off";
@@ -236,13 +310,22 @@ function monthsLabel(m) {
 // Debt avalanche (highest rate first) or snowball (smallest balance first):
 // pay each loan's minimum, then throw every spare rupee at the top-priority
 // loan, rolling it into the next one once it's cleared.
+// A loan with a `schedule` (a repayment plan: what's due each month from now
+// on) is paid exactly that each month, and whatever's left once it runs out.
+// It never gets extra money, since paying a plan early doesn't cut its total.
 function simulateStrategy(loans, strategyType, budget, maxMonths = 600) {
   let state = loans.map((l) => ({ ...l }));
   // A "protected" loan's real floor for month 1 is whichever is bigger: its stated
   // minimum, or the interest it's about to accrue on its starting balance — that's
   // what actually stops it from growing, not just its (possibly 0) minPayment.
+  // A repayment plan counts at its largest upcoming payment, so a rising plan
+  // can't outgrow the budget later on.
   const initialMinSum = state.reduce((s, l) => {
-    const floor = l.protectFromGrowth ? Math.max(l.minPayment || 0, l.balance * (l.rate / 12)) : l.minPayment || 0;
+    const floor = l.schedule
+      ? Math.min(l.balance, l.schedule.length > 0 ? Math.max(...l.schedule) : l.balance)
+      : l.protectFromGrowth
+      ? Math.max(l.minPayment || 0, l.balance * (l.rate / 12))
+      : l.minPayment || 0;
     return s + floor;
   }, 0);
   if (initialMinSum > budget + 0.5) {
@@ -273,7 +356,11 @@ function simulateStrategy(loans, strategyType, budget, maxMonths = 600) {
     active.forEach((l) => {
       // A protected loan always gets at least this month's real interest, recomputed
       // fresh off its actual balance — not a stale number that drifts as it's paid down.
-      const floor = l.protectFromGrowth
+      const floor = l.schedule
+        ? month <= l.schedule.length
+          ? l.schedule[month - 1]
+          : l.balance
+        : l.protectFromGrowth
         ? Math.max(l.minPayment || 0, interestThisMonth[l.id] || 0)
         : l.minPayment || 0;
       const pay = Math.min(floor, l.balance, budgetLeft);
@@ -282,10 +369,11 @@ function simulateStrategy(loans, strategyType, budget, maxMonths = 600) {
       plan[l.id] = (plan[l.id] || 0) + pay;
     });
 
+    const extraTargets = active.filter((l) => !l.schedule);
     const ordered =
       strategyType === "avalanche"
-        ? [...active].sort((a, b) => b.rate - a.rate)
-        : [...active].sort((a, b) => a.balance - b.balance);
+        ? [...extraTargets].sort((a, b) => b.rate - a.rate)
+        : [...extraTargets].sort((a, b) => a.balance - b.balance);
 
     for (const l of ordered) {
       if (budgetLeft <= 0.01) break;
@@ -325,6 +413,20 @@ function simulateStatusQuo(loans, maxMonths = 600) {
     const payment = l.currentPayment || 0;
     if (l.balance <= 0.5) {
       payoffMonth[l.id] = 0;
+      return;
+    }
+    if (l.schedule) {
+      // A repayment plan is paid as scheduled; anything still owed when it
+      // runs out is paid off the month after.
+      let bal = l.balance;
+      let m = 0;
+      while (bal > 0.5 && m < maxMonths) {
+        const pay = m < l.schedule.length ? l.schedule[m] : bal;
+        m++;
+        bal -= Math.min(pay, bal);
+      }
+      payoffMonth[l.id] = m;
+      months = Math.max(months, m);
       return;
     }
     if (payment <= l.balance * monthlyRate) {
@@ -784,6 +886,33 @@ const styles = `
   }
   .fl-term-row input { flex: 1; min-width: 0; }
   .fl-term-row .fl-tag-option { flex-shrink: 0; }
+
+  .fl-plan-preview {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border: 1px dashed rgba(176,138,62,0.45);
+    border-radius: 8px;
+    background: rgba(176,138,62,0.08);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--ink);
+  }
+  .fl-plan-details { margin-top: 10px; font-size: 13px; }
+  .fl-plan-details summary {
+    cursor: pointer;
+    color: var(--ink);
+    font-size: 13px;
+    padding: 4px 0;
+  }
+  .fl-plan-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 4px 0;
+    border-bottom: 1px dashed var(--line);
+  }
+  .fl-plan-row input { width: 130px; flex: none; padding: 6px 8px; }
   .fl-form-actions {
     display: flex;
     gap: 8px;
@@ -963,6 +1092,56 @@ function LenderForm({ initial, onSave, onCancel }) {
   // Left empty, the term starts the same month tracking started.
   const [termStart, setTermStart] = useState(initial && initial.termStart ? initial.termStart : "");
   const [termError, setTermError] = useState(false);
+  // Repayment plan: a set total to repay (the amount field) with monthly
+  // amounts over the term. planAmounts holds hand-adjusted amounts; null means
+  // spread evenly from the first payment.
+  const initialPlan = initial && initial.repaymentPlan ? initial.repaymentPlan : null;
+  const [hasPlan, setHasPlan] = useState(!!initialPlan);
+  const [received, setReceived] = useState(initialPlan ? String(initialPlan.received) : "");
+  const [firstPayment, setFirstPayment] = useState(initialPlan ? String(initialPlan.amounts[0]) : "");
+  const [planAmounts, setPlanAmounts] = useState(initialPlan ? initialPlan.amounts.map(String) : null);
+  const [planError, setPlanError] = useState("");
+
+  const termMonthsValue = Math.round(termUnit === "years" ? Number(termLength) * 12 : Number(termLength));
+  const spread = hasPlan ? spreadPlanAmounts(Number(amount), Number(firstPayment), termMonthsValue) : null;
+  const shownAmounts =
+    planAmounts && planAmounts.length === termMonthsValue ? planAmounts : spread ? spread.map(String) : null;
+  const planNumbers = shownAmounts ? shownAmounts.map((v) => Number(v) || 0) : null;
+  const planSum = planNumbers ? planNumbers.reduce((s, v) => s + v, 0) : 0;
+  const planMismatch = !!planNumbers && Math.abs(planSum - Number(amount)) > 0.5;
+  const planRate = planNumbers && !planMismatch ? planYearlyRate(Number(received), planNumbers) : null;
+  const planFirstKey = termStart || startMonth;
+
+  // Changing what the plan is built from re-spreads it evenly.
+  function resetPlan() {
+    setPlanAmounts(null);
+    setPlanError("");
+  }
+
+  function planPreview() {
+    if (!planNumbers || planNumbers.length === 0) return null;
+    const first = planNumbers[0];
+    const last = planNumbers[planNumbers.length - 1];
+    let shape;
+    if (planNumbers.every((v) => v === first)) shape = `${fmt(first)} every month.`;
+    else if (!planAmounts && planNumbers.length > 1) {
+      const step = Math.abs(planNumbers[1] - first);
+      shape = `${last > first ? "Rises" : "Falls"} by about ${fmt(step)} a month, from ${fmt(first)} to ${fmt(last)}.`;
+    } else shape = `From ${fmt(first)} to ${fmt(last)}.`;
+    const charge = Number(amount) - Number(received);
+    return (
+      <div className="fl-plan-preview">
+        {shape}
+        {Number(received) > 0 && charge > 0.5 && (
+          <>
+            <br />
+            Lender’s charge {fmt(charge)}
+            {planRate != null ? ` — costs about the same as ${(planRate * 100).toFixed(1)}% a year.` : "."}
+          </>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="fl-panel">
@@ -974,12 +1153,15 @@ function LenderForm({ initial, onSave, onCancel }) {
       </div>
 
       <div className="fl-field">
-        <label>Total amount borrowed (₹)</label>
+        <label>{hasPlan ? "Total to repay (₹)" : "Total amount borrowed (₹)"}</label>
         <input
           type="number"
           inputMode="decimal"
           value={amount}
-          onChange={(e) => setAmount(e.target.value)}
+          onChange={(e) => {
+            setAmount(e.target.value);
+            resetPlan();
+          }}
           placeholder="0"
         />
       </div>
@@ -1003,17 +1185,55 @@ function LenderForm({ initial, onSave, onCancel }) {
 
       <div className="fl-field">
         <div className="fl-switch-row">
-          <span className="fl-switch-label">Charges interest</span>
-          <Switch on={type === "interest"} onChange={(on) => setType(on ? "interest" : "fixed")} label="Charges interest" />
+          <span className="fl-switch-label">Repayment plan</span>
+          <Switch
+            on={hasPlan}
+            onChange={(on) => {
+              setHasPlan(on);
+              setPlanError("");
+              setTermError(false);
+            }}
+            label="Repayment plan"
+          />
         </div>
         <p className="fl-card-sub">
-          {type === "interest"
-            ? "Interest is added to the balance every month, even a month you don't pay."
-            : "No interest — the balance only ever changes when you record a payment."}
+          {hasPlan
+            ? "A set total to repay, with monthly amounts over a term — no interest rate."
+            : "For lenders who give a total to repay and monthly amounts instead of an interest rate."}
         </p>
       </div>
 
-      {type === "interest" && (
+      {hasPlan && (
+        <div className="fl-field">
+          <label>Amount you received (₹)</label>
+          <input
+            type="number"
+            inputMode="decimal"
+            value={received}
+            onChange={(e) => {
+              setReceived(e.target.value);
+              setPlanError("");
+            }}
+            placeholder="0"
+          />
+        </div>
+      )}
+
+      {!hasPlan && (
+        <div className="fl-field">
+          <div className="fl-switch-row">
+            <span className="fl-switch-label">Charges interest</span>
+            <Switch on={type === "interest"} onChange={(on) => setType(on ? "interest" : "fixed")} label="Charges interest" />
+          </div>
+          <p className="fl-card-sub">
+            {type === "interest"
+              ? "Interest is added to the balance every month, even a month you don't pay."
+              : "No interest — the balance only ever changes when you record a payment."}
+          </p>
+        </div>
+      )}
+
+      {!hasPlan && type === "interest" && (
         <div className="fl-field">
           <label>Annual interest rate (%)</label>
           <input
@@ -1026,7 +1246,7 @@ function LenderForm({ initial, onSave, onCancel }) {
         </div>
       )}
 
-      {type === "interest" && (
+      {!hasPlan && type === "interest" && (
         <div className="fl-field">
           <div className="fl-switch-row">
             <span className="fl-switch-label">Protect from growing</span>
@@ -1040,25 +1260,27 @@ function LenderForm({ initial, onSave, onCancel }) {
         </div>
       )}
 
-      <div className="fl-field">
-        <div className="fl-switch-row">
-          <span className="fl-switch-label">Payment term</span>
-          <Switch
-            on={hasTerm}
-            onChange={(on) => {
-              setHasTerm(on);
-              setTermError(false);
-            }}
-            label="Payment term"
-          />
+      {!hasPlan && (
+        <div className="fl-field">
+          <div className="fl-switch-row">
+            <span className="fl-switch-label">Payment term</span>
+            <Switch
+              on={hasTerm}
+              onChange={(on) => {
+                setHasTerm(on);
+                setTermError(false);
+              }}
+              label="Payment term"
+            />
+          </div>
+          <p className="fl-card-sub">{hasTerm ? "How long you have to pay it back." : "No fixed end date."}</p>
         </div>
-        <p className="fl-card-sub">{hasTerm ? "How long you have to pay it back." : "No fixed end date."}</p>
-      </div>
+      )}
 
-      {hasTerm && (
+      {(hasTerm || hasPlan) && (
         <>
           <div className="fl-field">
-            <label>Term length</label>
+            <label>{hasPlan ? "Repay over" : "Term length"}</label>
             <div className="fl-term-row">
               <input
                 type="number"
@@ -1067,6 +1289,7 @@ function LenderForm({ initial, onSave, onCancel }) {
                 onChange={(e) => {
                   setTermLength(e.target.value);
                   setTermError(false);
+                  resetPlan();
                 }}
                 placeholder={termUnit === "years" ? "e.g. 2" : "e.g. 24"}
               />
@@ -1076,7 +1299,10 @@ function LenderForm({ initial, onSave, onCancel }) {
                   type="button"
                   className={"fl-tag-option" + (termUnit === u ? " selected" : "")}
                   aria-pressed={termUnit === u}
-                  onClick={() => setTermUnit(u)}
+                  onClick={() => {
+                    setTermUnit(u);
+                    resetPlan();
+                  }}
                 >
                   {u === "months" ? "Months" : "Years"}
                 </button>
@@ -1084,34 +1310,95 @@ function LenderForm({ initial, onSave, onCancel }) {
             </div>
             {termError && (
               <p className="fl-overdue">
-                <AlertCircle size={12} /> Enter how long the term is, or turn Payment term off.
+                <AlertCircle size={12} /> Enter how long the term is{hasPlan ? "." : ", or turn Payment term off."}
               </p>
             )}
           </div>
 
           <div className="fl-field">
-            <label>Term started</label>
+            <label>{hasPlan ? "First payment month" : "Term started"}</label>
             <input type="month" value={termStart || startMonth} onChange={(e) => setTermStart(e.target.value)} />
             <p className="fl-card-sub">
-              Same as “Started tracking from” unless you change it — e.g. if the debt began before you started
-              tracking it here.
+              {hasPlan
+                ? "The month the first payment is due. Same as “Started tracking from” unless you change it."
+                : "Same as “Started tracking from” unless you change it — e.g. if the debt began before you started tracking it here."}
             </p>
           </div>
         </>
       )}
 
-      <div className="fl-field">
-        <label>
-          {type === "fixed" ? "Monthly payment (₹) — leave 0 if flexible" : "Minimum monthly payment (₹) — leave 0 if flexible"}
-        </label>
-        <input
-          type="number"
-          inputMode="decimal"
-          value={minPayment}
-          onChange={(e) => setMinPayment(e.target.value)}
-          placeholder="0"
-        />
-      </div>
+      {hasPlan && (
+        <div className="fl-field">
+          <label>First month’s payment (₹)</label>
+          <input
+            type="number"
+            inputMode="decimal"
+            value={firstPayment}
+            onChange={(e) => {
+              setFirstPayment(e.target.value);
+              resetPlan();
+            }}
+            placeholder="e.g. 15000"
+          />
+          <p className="fl-card-sub">
+            The app spreads the rest evenly so every month adds up to the total to repay. You can adjust any month
+            below.
+          </p>
+          {planPreview()}
+          {shownAmounts && (
+            <details className="fl-plan-details">
+              <summary>See or adjust each month’s amount</summary>
+              {shownAmounts.map((v, i) => (
+                <div className="fl-plan-row" key={i}>
+                  <span>{monthKeyShort(monthKeyAdd(planFirstKey, i))}</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    value={v}
+                    onChange={(e) => {
+                      const next = [...shownAmounts];
+                      next[i] = e.target.value;
+                      setPlanAmounts(next);
+                      setPlanError("");
+                    }}
+                  />
+                </div>
+              ))}
+              <p className="fl-card-sub" style={{ marginTop: 8 }}>
+                Adds up to {fmt(planSum)}
+                {planMismatch
+                  ? ` — ${fmt(Math.abs(planSum - Number(amount)))} ${planSum > Number(amount) ? "more" : "less"} than the total to repay.`
+                  : " ✓"}
+              </p>
+              {planAmounts && (
+                <button type="button" className="fl-btn secondary" style={{ marginTop: 6 }} onClick={resetPlan}>
+                  Spread evenly again
+                </button>
+              )}
+            </details>
+          )}
+          {planError && (
+            <p className="fl-overdue">
+              <AlertCircle size={12} /> {planError}
+            </p>
+          )}
+        </div>
+      )}
+
+      {!hasPlan && (
+        <div className="fl-field">
+          <label>
+            {type === "fixed" ? "Monthly payment (₹) — leave 0 if flexible" : "Minimum monthly payment (₹) — leave 0 if flexible"}
+          </label>
+          <input
+            type="number"
+            inputMode="decimal"
+            value={minPayment}
+            onChange={(e) => setMinPayment(e.target.value)}
+            placeholder="0"
+          />
+        </div>
+      )}
 
       <div className="fl-field">
         <label>Payment due day of month — optional</label>
@@ -1139,28 +1426,59 @@ function LenderForm({ initial, onSave, onCancel }) {
           className="fl-btn"
           onClick={() => {
             if (!name.trim()) return;
+            const day = Number(dueDay);
+            const common = {
+              name: name.trim(),
+              category,
+              totalAmount: Number(amount) || 0,
+              dueDay: day >= 1 && day <= 31 ? day : null,
+              startMonth: startMonth || currentMonthKey(),
+            };
+
+            if (hasPlan) {
+              if (!(termMonthsValue >= 1)) {
+                setTermError(true);
+                return;
+              }
+              if (!(Number(amount) > 0)) return setPlanError("Enter the total you have to repay.");
+              if (!(Number(received) > 0)) return setPlanError("Enter the amount you received.");
+              if (!planAmounts && !(Number(firstPayment) > 0)) return setPlanError("Enter the first month’s payment.");
+              if (!planNumbers)
+                return setPlanError("That first payment is too big to spread over this term — check the amounts.");
+              if (shownAmounts.some((v) => !(Number(v) >= 0) || v === ""))
+                return setPlanError("Every month needs an amount (0 or more).");
+              if (planMismatch)
+                return setPlanError("The monthly amounts must add up to the total to repay — adjust them or spread evenly again.");
+              onSave({
+                ...common,
+                type: "fixed",
+                annualRate: 0,
+                minPayment: planNumbers[0],
+                protectFromGrowth: false,
+                termMonths: termMonthsValue,
+                termStart: termStart || null,
+                repaymentPlan: { received: Number(received), amounts: planNumbers },
+              });
+              return;
+            }
+
             let termMonths = null;
             if (hasTerm) {
-              const n = Number(termLength);
-              termMonths = Math.round(termUnit === "years" ? n * 12 : n);
+              termMonths = termMonthsValue;
               if (!(termMonths >= 1)) {
                 setTermError(true);
                 return;
               }
             }
-            const day = Number(dueDay);
             onSave({
-              name: name.trim(),
-              category,
+              ...common,
               type,
-              totalAmount: Number(amount) || 0,
               annualRate: type === "interest" ? (Number(rate) || 0) / 100 : 0,
               minPayment: Number(minPayment) || 0,
               protectFromGrowth: type === "interest" ? protectFromGrowth : false,
-              dueDay: day >= 1 && day <= 31 ? day : null,
-              startMonth: startMonth || currentMonthKey(),
               termMonths,
               termStart: termMonths ? termStart || null : null,
+              repaymentPlan: null,
             });
           }}
         >
@@ -1376,17 +1694,45 @@ export default function FamilyLedger() {
     const { rows, finalBalance } = computeSchedule(l, entries, asOfKey);
     const currentRow = rows[rows.length - 1];
     const currentEntry = entries[asOfKey];
-    const isOverdue = !!l.dueDay && !currentEntry && today.getDate() > l.dueDay && finalBalance > 0.5;
+    // On a repayment plan, only a month with something due can be due, paid or overdue.
+    const plan = !!l.repaymentPlan;
+    const dueThisMonth = plan ? planDueFor(l, asOfKey) : 0;
+    const paidThisMonth = currentEntry && currentRow ? currentRow.totalPaid : 0;
+    const somethingDue = !plan || dueThisMonth > 0;
+    const isOverdue = !!l.dueDay && !currentEntry && today.getDate() > l.dueDay && finalBalance > 0.5 && somethingDue;
     const daysUntilDue = l.dueDay ? l.dueDay - today.getDate() : null;
     const isDueSoon =
-      !!l.dueDay && !currentEntry && finalBalance > 0.5 && daysUntilDue !== null && daysUntilDue >= 0 && daysUntilDue <= 5;
-    const isPaidThisMonth = !!currentEntry && !!currentRow && currentRow.totalPaid > 0.5;
+      !!l.dueDay &&
+      !currentEntry &&
+      finalBalance > 0.5 &&
+      daysUntilDue !== null &&
+      daysUntilDue >= 0 &&
+      daysUntilDue <= 5 &&
+      somethingDue;
+    const isPaidThisMonth =
+      !!currentEntry && !!currentRow && currentRow.totalPaid > 0.5 && (!plan || paidThisMonth >= dueThisMonth - 0.5);
+    // Recorded this month, but for less than the plan says is due.
+    const shortThisMonth =
+      plan && currentEntry && dueThisMonth > 0 && paidThisMonth < dueThisMonth - 0.5 ? dueThisMonth - paidThisMonth : 0;
     // A past month (before this one) that has no recorded entry at all, from a loan
     // that's still owed and does have a due date to miss — only counted while there
-    // was actually a balance outstanding going into that month.
+    // was actually a balance outstanding going into that month. A repayment plan
+    // reports how far behind it is instead (which also covers part-paid months).
     const missedMonths =
-      l.dueDay && finalBalance > 0.5 ? rows.slice(0, -1).filter((r) => !r.recorded && r.opening > 0.5) : [];
-    return { ...l, remaining: finalBalance, isOverdue, isDueSoon, daysUntilDue, isPaidThisMonth, missedMonths };
+      !plan && l.dueDay && finalBalance > 0.5 ? rows.slice(0, -1).filter((r) => !r.recorded && r.opening > 0.5) : [];
+    const behindPlan = plan && finalBalance > 0.5 ? planShortfall(l, rows, asOfKey) : 0;
+    return {
+      ...l,
+      remaining: finalBalance,
+      isOverdue,
+      isDueSoon,
+      daysUntilDue,
+      isPaidThisMonth,
+      missedMonths,
+      dueThisMonth,
+      shortThisMonth,
+      behindPlan,
+    };
   });
 
   const totalAmount = lenderSummaries.reduce((s, l) => s + (Number(l.totalAmount) || 0), 0);
@@ -1399,7 +1745,17 @@ export default function FamilyLedger() {
   const strategyLoans = lenders
     .map((l) => {
       const entries = payments[l.id] || {};
-      const { finalBalance } = computeSchedule(l, entries, asOfKey);
+      const { rows, finalBalance } = computeSchedule(l, entries, asOfKey);
+      // A repayment plan's schedule starts with this month's due, less anything
+      // already paid toward it (its balance already reflects that payment).
+      let schedule = null;
+      if (l.repaymentPlan) {
+        schedule = upcomingPlanAmounts(l, asOfKey);
+        const currentRow = rows[rows.length - 1];
+        if (schedule.length > 0 && entries[asOfKey] && currentRow) {
+          schedule[0] = Math.max(schedule[0] - currentRow.totalPaid, 0);
+        }
+      }
       return {
         id: l.id,
         name: l.name,
@@ -1408,6 +1764,7 @@ export default function FamilyLedger() {
         minPayment: Number(l.minPayment) || 0,
         currentPayment: getCurrentPayment(l, entries),
         protectFromGrowth: l.type !== "fixed" && !!l.protectFromGrowth,
+        schedule,
       };
     })
     .filter((l) => l.balance > 0.5);
@@ -1559,7 +1916,9 @@ export default function FamilyLedger() {
                     l.isPaidThisMonth ||
                     l.isOverdue ||
                     l.isDueSoon ||
-                    l.missedMonths.length > 0) && (
+                    l.missedMonths.length > 0 ||
+                    l.shortThisMonth > 0.5 ||
+                    l.behindPlan > 0.5) && (
                     <div className="fl-chip-row">
                       {categoryLabel(l.category) && <span className="fl-chip chip-tag">{categoryLabel(l.category)}</span>}
                       {l.protectFromGrowth && <span className="fl-chip chip-blue">protected</span>}
@@ -1588,6 +1947,16 @@ export default function FamilyLedger() {
                             : `${l.missedMonths.length} months missed`}
                         </span>
                       )}
+                      {l.shortThisMonth > 0.5 && (
+                        <span className="fl-overdue" style={{ marginTop: 0 }}>
+                          <AlertCircle size={12} /> {fmt(l.shortThisMonth)} short for {monthKeyShort(asOfKey)}
+                        </span>
+                      )}
+                      {l.behindPlan > 0.5 && (
+                        <span className="fl-overdue" style={{ marginTop: 0 }}>
+                          <AlertCircle size={12} /> {fmt(l.behindPlan)} behind plan
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1613,7 +1982,11 @@ export default function FamilyLedger() {
                     <div className="fl-list-row-name">{l.name}</div>
                     <div className="fl-list-row-sub fl-mono">
                       {fmt(l.totalAmount)} ·{" "}
-                      {l.type === "fixed" ? "no interest" : `${((l.annualRate || 0) * 100).toFixed(2)}% p.a.`}
+                      {l.repaymentPlan
+                        ? "repayment plan"
+                        : l.type === "fixed"
+                        ? "no interest"
+                        : `${((l.annualRate || 0) * 100).toFixed(2)}% p.a.`}
                       {l.dueDay ? ` · due on the ${ordinal(l.dueDay)}` : ""}
                     </div>
                     {(categoryLabel(l.category) || l.protectFromGrowth) && (
@@ -1787,7 +2160,7 @@ export default function FamilyLedger() {
                       <div className="fl-list-row-main">
                         <div className="fl-list-row-name">{l.name}</div>
                         <div className="fl-list-row-sub fl-mono">
-                          {(l.rate * 100).toFixed(2)}% p.a. · balance {fmt(l.balance)}
+                          {l.schedule ? "repayment plan" : `${(l.rate * 100).toFixed(2)}% p.a.`} · balance {fmt(l.balance)}
                         </div>
                         {l.protectFromGrowth && (
                           <div style={{ marginTop: 5 }}>
@@ -1818,8 +2191,9 @@ export default function FamilyLedger() {
 
             <p className="fl-card-sub" style={{ marginTop: 14 }}>
               Set each debt’s minimum monthly payment from its edit form on the Debts tab — leave it at 0 for
-              flexible, informal ones, or tick “protect from growing” on a debt that must never be left to pile up
-              interest while it waits its turn. This isn’t financial advice tailored to your situation; check things
+              flexible, informal ones, or turn on “protect from growing” for a debt that must never be left to pile up
+              interest while it waits its turn. A debt on a repayment plan only ever gets what’s due that month,
+              since paying it early doesn’t reduce its total. This isn’t financial advice tailored to your situation; check things
               like tax benefits or prepayment penalties before making big changes.
             </p>
           </>
@@ -1837,28 +2211,43 @@ export default function FamilyLedger() {
               (() => {
                 const entries = payments[selectedLoan.id] || {};
                 const { rows, finalBalance, nextInterest } = computeSchedule(selectedLoan, entries, asOfKey);
-                const currentEntry = entries[asOfKey];
-                const isOverdue =
-                  !!selectedLoan.dueDay && !currentEntry && today.getDate() > selectedLoan.dueDay && finalBalance > 0.5;
+                const summary = lenderSummaries.find((s) => s.id === selectedLoan.id);
+                const isOverdue = summary.isOverdue;
                 const suggestedMonth = getSuggestedMonth(selectedLoan, entries, asOfKey);
+                const plan = selectedLoan.repaymentPlan;
+                const planCharge = plan ? (selectedLoan.totalAmount || 0) - plan.received : 0;
+                const planRate = plan ? planYearlyRate(plan.received, plan.amounts) : null;
+                const upcoming = plan
+                  ? plan.amounts
+                      .map((amt, i) => ({ key: monthKeyAdd(selectedLoan.termStart || selectedLoan.startMonth, i), amt }))
+                      .filter((m) => m.key > asOfKey)
+                  : [];
 
                 return (
                   <>
                     <div className="fl-detail-head">
                       <div className="fl-card-row">
-                        <span className="fl-card-sub">Total amount borrowed</span>
+                        <span className="fl-card-sub">{plan ? "Total to repay" : "Total amount borrowed"}</span>
                         <button className="fl-icon-btn" onClick={() => setEditingLoanId(selectedLoan.id)} aria-label="Edit debt details">
                           <Pencil size={14} />
                         </button>
                       </div>
                       <p className="fl-stat-value fl-mono" style={{ fontSize: 20 }}>{fmt(selectedLoan.totalAmount)}</p>
                       <p className="fl-card-sub" style={{ marginTop: 4 }}>
-                        {selectedLoan.type === "fixed"
+                        {plan
+                          ? `Repayment plan · received ${fmt(plan.received)}`
+                          : selectedLoan.type === "fixed"
                           ? "No interest"
                           : `${((selectedLoan.annualRate || 0) * 100).toFixed(2)}% per annum`}
                         {selectedLoan.dueDay ? ` · due on the ${ordinal(selectedLoan.dueDay)}` : ""}
                         {selectedLoan.protectFromGrowth ? " · protected from growing" : ""}
                       </p>
+                      {plan && planCharge > 0.5 && (
+                        <p className="fl-card-sub">
+                          Lender’s charge {fmt(planCharge)}
+                          {planRate != null ? ` — costs about the same as ${(planRate * 100).toFixed(1)}% a year` : ""}
+                        </p>
+                      )}
                       {selectedLoan.termMonths ? (
                         <p className="fl-card-sub">{termSummary(selectedLoan, asOfKey)}</p>
                       ) : null}
@@ -1870,6 +2259,16 @@ export default function FamilyLedger() {
                       {isOverdue && (
                         <p className="fl-overdue">
                           <AlertCircle size={12} /> Overdue for {monthKeyLabel(asOfKey)}
+                        </p>
+                      )}
+                      {summary.shortThisMonth > 0.5 && (
+                        <p className="fl-overdue">
+                          <AlertCircle size={12} /> {fmt(summary.shortThisMonth)} short for {monthKeyLabel(asOfKey)}
+                        </p>
+                      )}
+                      {summary.behindPlan > 0.5 && (
+                        <p className="fl-overdue">
+                          <AlertCircle size={12} /> {fmt(summary.behindPlan)} behind plan from earlier months
                         </p>
                       )}
 
@@ -1890,7 +2289,24 @@ export default function FamilyLedger() {
                             <p className="fl-stat-value fl-mono">{fmt(nextInterest)}</p>
                           </div>
                         )}
+                        {plan && (
+                          <div>
+                            <p className="fl-stat-label">Due for {monthKeyShort(asOfKey)}</p>
+                            <p className="fl-stat-value fl-mono">{fmt(summary.dueThisMonth)}</p>
+                          </div>
+                        )}
                       </div>
+                      {upcoming.length > 0 && (
+                        <details className="fl-plan-details">
+                          <summary>Upcoming payments ({upcoming.length})</summary>
+                          {upcoming.map((m) => (
+                            <div className="fl-plan-row" key={m.key}>
+                              <span>{monthKeyShort(m.key)}</span>
+                              <span className="fl-mono">{fmt(m.amt)}</span>
+                            </div>
+                          ))}
+                        </details>
+                      )}
                     </div>
 
                     <p className="fl-section-title">Monthly entries</p>
@@ -1921,7 +2337,15 @@ export default function FamilyLedger() {
                               : selectedLoan.type !== "fixed"
                               ? `No payment recorded — interest ${fmt(row.interest)} added`
                               : "No payment recorded"}
+                            {plan && planDueFor(selectedLoan, row.key) > 0 && ` — ${fmt(planDueFor(selectedLoan, row.key))} due`}
                           </div>
+                          {plan &&
+                            row.recorded &&
+                            row.totalPaid < planDueFor(selectedLoan, row.key) - 0.5 && (
+                              <p className="fl-overdue">
+                                <AlertCircle size={12} /> {fmt(planDueFor(selectedLoan, row.key) - row.totalPaid)} short
+                              </p>
+                            )}
                           {row.recorded && (
                             <div style={{ marginTop: 6 }}>
                               <ConfirmButton
