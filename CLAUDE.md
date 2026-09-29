@@ -17,6 +17,12 @@ On screen, entries are called **debts** (the tab is "Debts", "Add a debt or cred
 
 - `category` is the optional loan-type tag (ids in `CATEGORIES` in `src/App.jsx`). It's a label only and never enters any calculation. Loans saved before it existed simply have no tag, and `migrateData` deliberately doesn't backfill it, so no silent write hits the live data.
 - `type` controls interest: `"interest"` or `"fixed"` (no interest). The "Charges interest" switch in `LenderForm` is this field (on = `"interest"`), so don't confuse it with `category`.
+- `termMonths` / `termStart` are the optional payment term (whole months, plus the month it began; `termStart` null means it began at `startMonth`). Display only: the debt's page shows "2-year term · ends … · N months to go". It doesn't feed into balances or the Strategy plan.
+- The form's on/off controls (interest, protect from growing, payment term) all use the shared `Switch` component. The toggles section of the form sits together: interest, rate, protect, then term.
+
+## Testing without touching live data
+
+`.env.local` points at the live family database, so never click Save in the normal dev server. To test the form end-to-end, run a small local stand-in for the Supabase `ledger` table with made-up loans (GET returns `[{payload}]`, POST upsert stores it and returns 201, plus CORS). Then start a second Vite on another port with `VITE_SUPABASE_URL=http://127.0.0.1:<port> VITE_SUPABASE_ANON_KEY=test`, since shell env vars override `.env.local`. Confirm no requests go to supabase.co before saving anything.
 
 ## If the bottom strip returns
 

@@ -777,11 +777,13 @@ const styles = `
     outline: 2px solid var(--brass);
     outline-offset: 1px;
   }
-  .fl-field input[type="checkbox"] {
-    width: auto;
-    flex-shrink: 0;
-    margin: 0;
+  .fl-term-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
+  .fl-term-row input { flex: 1; min-width: 0; }
+  .fl-term-row .fl-tag-option { flex-shrink: 0; }
   .fl-form-actions {
     display: flex;
     gap: 8px;
@@ -902,6 +904,44 @@ function ConfirmButton({ onConfirm, label }) {
   );
 }
 
+function Switch({ on, onChange, label }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      className={"fl-switch" + (on ? " on" : "")}
+      onClick={() => onChange(!on)}
+    >
+      <span className="fl-switch-knob" />
+    </button>
+  );
+}
+
+// "2-year term", "18-month term".
+function termLabel(months) {
+  if (months % 12 === 0) return `${months / 12}-year term`;
+  return `${months}-month term`;
+}
+
+// The term's last month. The start month counts as month 1, so a 24-month
+// term from Jan 2026 ends Dec 2027. With no termStart saved, the term starts
+// when tracking started. Display only — the term never affects any balance.
+function termEndKey(lender) {
+  return monthKeyAdd(lender.termStart || lender.startMonth, lender.termMonths - 1);
+}
+
+function termSummary(lender, asOfKey) {
+  const end = termEndKey(lender);
+  const left = monthsBetween(asOfKey, end) + 1;
+  return (
+    termLabel(lender.termMonths) +
+    " · " +
+    (left > 0 ? `ends ${monthKeyShort(end)} · ${left} month${left === 1 ? "" : "s"} to go` : `ended ${monthKeyShort(end)}`)
+  );
+}
+
 function LenderForm({ initial, onSave, onCancel }) {
   const [name, setName] = useState(initial ? initial.name : "");
   const [category, setCategory] = useState(initial && initial.category ? initial.category : null);
@@ -913,6 +953,16 @@ function LenderForm({ initial, onSave, onCancel }) {
   const [protectFromGrowth, setProtectFromGrowth] = useState(initial ? !!initial.protectFromGrowth : false);
   const [dueDay, setDueDay] = useState(initial && initial.dueDay ? String(initial.dueDay) : "");
   const [startMonth, setStartMonth] = useState(initial && initial.startMonth ? initial.startMonth : currentMonthKey());
+  // Term is saved as whole months; it reopens in years when it divides evenly.
+  const initialTerm = initial && initial.termMonths ? initial.termMonths : null;
+  const [hasTerm, setHasTerm] = useState(!!initialTerm);
+  const [termUnit, setTermUnit] = useState(initialTerm && initialTerm % 12 === 0 ? "years" : "months");
+  const [termLength, setTermLength] = useState(
+    initialTerm ? String(initialTerm % 12 === 0 ? initialTerm / 12 : initialTerm) : ""
+  );
+  // Left empty, the term starts the same month tracking started.
+  const [termStart, setTermStart] = useState(initial && initial.termStart ? initial.termStart : "");
+  const [termError, setTermError] = useState(false);
 
   return (
     <div className="fl-panel">
@@ -954,16 +1004,7 @@ function LenderForm({ initial, onSave, onCancel }) {
       <div className="fl-field">
         <div className="fl-switch-row">
           <span className="fl-switch-label">Charges interest</span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={type === "interest"}
-            aria-label="Charges interest"
-            className={"fl-switch" + (type === "interest" ? " on" : "")}
-            onClick={() => setType(type === "interest" ? "fixed" : "interest")}
-          >
-            <span className="fl-switch-knob" />
-          </button>
+          <Switch on={type === "interest"} onChange={(on) => setType(on ? "interest" : "fixed")} label="Charges interest" />
         </div>
         <p className="fl-card-sub">
           {type === "interest"
@@ -985,6 +1026,80 @@ function LenderForm({ initial, onSave, onCancel }) {
         </div>
       )}
 
+      {type === "interest" && (
+        <div className="fl-field">
+          <div className="fl-switch-row">
+            <span className="fl-switch-label">Protect from growing</span>
+            <Switch on={protectFromGrowth} onChange={setProtectFromGrowth} label="Protect from growing" />
+          </div>
+          <p className="fl-card-sub">
+            Don’t let this debt grow while it waits its turn. In the Strategy plan, it will always get at least that
+            month’s interest — recalculated off its real balance each month — even on a month the plan would
+            otherwise send it ₹0.
+          </p>
+        </div>
+      )}
+
+      <div className="fl-field">
+        <div className="fl-switch-row">
+          <span className="fl-switch-label">Payment term</span>
+          <Switch
+            on={hasTerm}
+            onChange={(on) => {
+              setHasTerm(on);
+              setTermError(false);
+            }}
+            label="Payment term"
+          />
+        </div>
+        <p className="fl-card-sub">{hasTerm ? "How long you have to pay it back." : "No fixed end date."}</p>
+      </div>
+
+      {hasTerm && (
+        <>
+          <div className="fl-field">
+            <label>Term length</label>
+            <div className="fl-term-row">
+              <input
+                type="number"
+                inputMode="decimal"
+                value={termLength}
+                onChange={(e) => {
+                  setTermLength(e.target.value);
+                  setTermError(false);
+                }}
+                placeholder={termUnit === "years" ? "e.g. 2" : "e.g. 24"}
+              />
+              {["months", "years"].map((u) => (
+                <button
+                  key={u}
+                  type="button"
+                  className={"fl-tag-option" + (termUnit === u ? " selected" : "")}
+                  aria-pressed={termUnit === u}
+                  onClick={() => setTermUnit(u)}
+                >
+                  {u === "months" ? "Months" : "Years"}
+                </button>
+              ))}
+            </div>
+            {termError && (
+              <p className="fl-overdue">
+                <AlertCircle size={12} /> Enter how long the term is, or turn Payment term off.
+              </p>
+            )}
+          </div>
+
+          <div className="fl-field">
+            <label>Term started</label>
+            <input type="month" value={termStart || startMonth} onChange={(e) => setTermStart(e.target.value)} />
+            <p className="fl-card-sub">
+              Same as “Started tracking from” unless you change it — e.g. if the debt began before you started
+              tracking it here.
+            </p>
+          </div>
+        </>
+      )}
+
       <div className="fl-field">
         <label>
           {type === "fixed" ? "Monthly payment (₹) — leave 0 if flexible" : "Minimum monthly payment (₹) — leave 0 if flexible"}
@@ -997,23 +1112,6 @@ function LenderForm({ initial, onSave, onCancel }) {
           placeholder="0"
         />
       </div>
-
-      {type === "interest" && (
-        <div className="fl-field">
-          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={protectFromGrowth}
-              onChange={(e) => setProtectFromGrowth(e.target.checked)}
-            />
-            <span>Don’t let this debt grow while it waits its turn</span>
-          </label>
-          <p className="fl-card-sub">
-            In the Strategy plan, this debt will always get at least that month’s interest — recalculated off its
-            real balance each month — even on a month the plan would otherwise send it ₹0.
-          </p>
-        </div>
-      )}
 
       <div className="fl-field">
         <label>Payment due day of month — optional</label>
@@ -1041,6 +1139,15 @@ function LenderForm({ initial, onSave, onCancel }) {
           className="fl-btn"
           onClick={() => {
             if (!name.trim()) return;
+            let termMonths = null;
+            if (hasTerm) {
+              const n = Number(termLength);
+              termMonths = Math.round(termUnit === "years" ? n * 12 : n);
+              if (!(termMonths >= 1)) {
+                setTermError(true);
+                return;
+              }
+            }
             const day = Number(dueDay);
             onSave({
               name: name.trim(),
@@ -1052,6 +1159,8 @@ function LenderForm({ initial, onSave, onCancel }) {
               protectFromGrowth: type === "interest" ? protectFromGrowth : false,
               dueDay: day >= 1 && day <= 31 ? day : null,
               startMonth: startMonth || currentMonthKey(),
+              termMonths,
+              termStart: termMonths ? termStart || null : null,
             });
           }}
         >
@@ -1750,6 +1859,9 @@ export default function FamilyLedger() {
                         {selectedLoan.dueDay ? ` · due on the ${ordinal(selectedLoan.dueDay)}` : ""}
                         {selectedLoan.protectFromGrowth ? " · protected from growing" : ""}
                       </p>
+                      {selectedLoan.termMonths ? (
+                        <p className="fl-card-sub">{termSummary(selectedLoan, asOfKey)}</p>
+                      ) : null}
                       {categoryLabel(selectedLoan.category) && (
                         <div className="fl-chip-row" style={{ marginTop: 6 }}>
                           <span className="fl-chip chip-tag">{categoryLabel(selectedLoan.category)}</span>
