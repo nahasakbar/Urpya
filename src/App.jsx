@@ -567,6 +567,47 @@ function simulateStatusQuo(loans, maxMonths = 600) {
   return { totalInterest, months, payoffMonth, stalled };
 }
 
+// ---- Debt budget made of parts ----
+// strategy.budgetParts (optional) says what the monthly debt budget is made of:
+//   { id, kind: "set", label, amount }       a fixed amount (salary, a person's share…)
+//   { id, kind: "income", incomeId, share }  a share (0–1) of an income source's usual profit
+// The budget is their sum, worked out fresh each time, so an income share follows
+// that source's profit (and its yearly rises). With no parts saved, the old single
+// strategy.budget is the whole budget, exactly as before. strategy.budget is still
+// saved alongside the parts as a snapshot of the total.
+
+const GOAL_EXTRA_LABEL = "Extra for debt-free goal";
+
+// The parts to show and edit: the saved ones, or the old single budget as one set amount.
+function budgetPartsOf(strategy) {
+  if (Array.isArray(strategy.budgetParts)) return strategy.budgetParts;
+  const b = Number(strategy.budget) || 0;
+  return b > 0 ? [{ id: "set-base", kind: "set", label: "Set amount", amount: b }] : [];
+}
+
+// What one part adds to this month's budget. An income share uses the source's usual
+// profit now; a source that hasn't started, makes a loss or no longer exists adds nothing.
+function budgetPartAmount(part, incomesById, asOfKey) {
+  if (part.kind === "income") {
+    const src = incomesById[part.incomeId];
+    if (!src || (src.startMonth || asOfKey) > asOfKey) return 0;
+    const profit = expectedIncomeFor(src, asOfKey) - (Number(src.usualExpenses) || 0);
+    return Math.max(Math.round(profit * (Number(part.share) || 0)), 0);
+  }
+  return Number(part.amount) || 0;
+}
+
+function budgetTotal(parts, incomesById, asOfKey) {
+  return parts.reduce((s, p) => s + budgetPartAmount(p, incomesById, asOfKey), 0);
+}
+
+// "all of its profit", "half of its profit", "30% of its profit".
+function shareLabel(share) {
+  if (share >= 1) return "all of its profit";
+  if (share === 0.5) return "half of its profit";
+  return `${Math.round(share * 1000) / 10}% of its profit`;
+}
+
 // The smallest monthly budget (rounded up to the next ₹100) that clears every
 // loan within `targetMonths` under the given strategy. Only runs
 // simulateStrategy — it doesn't change it. If even paying everything off at
@@ -1131,6 +1172,46 @@ const styles = `
     border-bottom: 1px dashed var(--line);
   }
   .fl-plan-row input { width: 130px; flex: none; padding: 6px 8px; }
+
+  /* Monthly debt budget: its parts in the editor, and the breakdown on the Strategy card. */
+  .fl-budget-part {
+    padding: 10px 0;
+    border-bottom: 1px dashed var(--line);
+  }
+  .fl-budget-part input {
+    width: 100%;
+    padding: 9px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 14px;
+    background: #fff;
+    color: var(--ink);
+    font-family: inherit;
+  }
+  .fl-budget-part .fl-term-row input { flex: 1; min-width: 0; width: auto; }
+  .fl-budget-part-end { display: inline-flex; align-items: center; gap: 2px; }
+  .fl-budget-total {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding-top: 12px;
+    font-weight: 700;
+    font-size: 15px;
+  }
+  .fl-budget-breakdown {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--line);
+  }
+  .fl-budget-line {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--muted);
+    padding: 2px 0;
+  }
+  .fl-budget-line .fl-mono { color: var(--ink); flex-shrink: 0; }
   .fl-form-actions {
     display: flex;
     gap: 8px;
@@ -1780,6 +1861,208 @@ function MonthEntryForm({ people, monthKey, onMonthKeyChange, defaults, isExisti
   );
 }
 
+// Builds the monthly debt budget from set amounts and shares of income profit.
+function BudgetEditor({ initialParts, incomes, people, asOfKey, onSave, onCancel }) {
+  const [parts, setParts] = useState(() =>
+    initialParts.map((p) =>
+      p.kind === "income"
+        ? {
+            ...p,
+            mode: p.share >= 1 ? "full" : p.share === 0.5 ? "half" : "custom",
+            pctText: String(Math.round(p.share * 1000) / 10),
+          }
+        : { ...p, amountText: String(p.amount) }
+    )
+  );
+  const [error, setError] = useState("");
+  const incomesById = Object.fromEntries(incomes.map((s) => [s.id, s]));
+
+  // The share each income row stands for right now, from its Full / Half / Custom choice.
+  const shareOf = (p) => (p.mode === "full" ? 1 : p.mode === "half" ? 0.5 : Math.min(Number(p.pctText) || 0, 100) / 100);
+  const clean = parts.map((p) =>
+    p.kind === "income"
+      ? { id: p.id, kind: "income", incomeId: p.incomeId, share: shareOf(p) }
+      : { id: p.id, kind: "set", label: (p.label || "").trim() || "Set amount", amount: Number(p.amountText) || 0 }
+  );
+  const total = budgetTotal(clean, incomesById, asOfKey);
+  const usedIncomeIds = new Set(parts.filter((p) => p.kind === "income").map((p) => p.incomeId));
+  const usedLabels = new Set(parts.filter((p) => p.kind === "set").map((p) => (p.label || "").trim()));
+
+  function update(i, fields) {
+    setParts(parts.map((p, j) => (j === i ? { ...p, ...fields } : p)));
+    setError("");
+  }
+  function remove(i) {
+    setParts(parts.filter((_, j) => j !== i));
+  }
+
+  return (
+    <>
+      <div className="fl-panel">
+        <p className="fl-card-sub" style={{ marginTop: 0, marginBottom: 10 }}>
+          Your monthly debt budget is the total of these. A share of an income source follows its usual profit, so it
+          goes up when the income does.
+        </p>
+        {parts.length === 0 && <p className="fl-card-sub">Nothing in the budget yet — add something below.</p>}
+
+        {parts.map((p, i) => {
+          if (p.kind === "income") {
+            const src = incomesById[p.incomeId];
+            const profit = src ? expectedIncomeFor(src, asOfKey) - (Number(src.usualExpenses) || 0) : 0;
+            return (
+              <div className="fl-budget-part" key={p.id}>
+                <div className="fl-card-row">
+                  <span className="fl-list-row-name">{src ? src.name : "Removed income source"}</span>
+                  <span className="fl-budget-part-end">
+                    <span className="fl-mono">{fmt(budgetPartAmount(clean[i], incomesById, asOfKey))}</span>
+                    <button className="fl-icon-btn" onClick={() => remove(i)} aria-label="Remove from budget">
+                      <X size={16} />
+                    </button>
+                  </span>
+                </div>
+                <p className="fl-card-sub" style={{ margin: "0 0 6px" }}>
+                  {profit > 0 ? `Usual profit ${fmt(profit)} a month` : "Makes no profit right now — adds nothing"}
+                </p>
+                <div className="fl-tag-picker">
+                  {[
+                    ["full", "Full"],
+                    ["half", "Half"],
+                    ["custom", "Custom %"],
+                  ].map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      className={"fl-tag-option" + (p.mode === mode ? " selected" : "")}
+                      aria-pressed={p.mode === mode}
+                      onClick={() => update(i, { mode })}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {p.mode === "custom" && (
+                  <div className="fl-term-row" style={{ marginTop: 8 }}>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      value={p.pctText}
+                      onChange={(e) => update(i, { pctText: e.target.value })}
+                      placeholder="e.g. 30"
+                    />
+                    <span className="fl-card-sub" style={{ flexShrink: 0 }}>% of its profit</span>
+                  </div>
+                )}
+              </div>
+            );
+          }
+          return (
+            <div className="fl-budget-part" key={p.id}>
+              <div className="fl-term-row">
+                <input
+                  value={p.label || ""}
+                  onChange={(e) => update(i, { label: e.target.value })}
+                  placeholder="Name, e.g. Salary"
+                />
+                <button className="fl-icon-btn" onClick={() => remove(i)} aria-label="Remove from budget">
+                  <X size={16} />
+                </button>
+              </div>
+              <input
+                type="number"
+                inputMode="decimal"
+                value={p.amountText}
+                onChange={(e) => update(i, { amountText: e.target.value })}
+                placeholder="Amount each month (₹)"
+                style={{ marginTop: 8 }}
+              />
+            </div>
+          );
+        })}
+
+        <div className="fl-budget-total">
+          <span>Total each month</span>
+          <span className="fl-mono">{fmt(total)}</span>
+        </div>
+      </div>
+
+      <div className="fl-panel">
+      <p className="fl-panel-title fl-serif">Add to the budget</p>
+      {incomes.length > 0 && (
+        <div className="fl-field">
+          <label>A share of an income source</label>
+          <div className="fl-tag-picker">
+            {incomes
+              .filter((s) => !usedIncomeIds.has(s.id))
+              .map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className="fl-tag-option"
+                  onClick={() =>
+                    setParts([...parts, { id: uid("bp"), kind: "income", incomeId: s.id, mode: "full", pctText: "100" }])
+                  }
+                >
+                  + {s.name}
+                </button>
+              ))}
+            {incomes.every((s) => usedIncomeIds.has(s.id)) && (
+              <p className="fl-card-sub" style={{ margin: 0 }}>All your income sources are already in the budget.</p>
+            )}
+          </div>
+        </div>
+      )}
+      <div className="fl-field">
+        <label>A set amount each month</label>
+        <div className="fl-tag-picker">
+          {people
+            .filter((name) => !usedLabels.has(name))
+            .map((name) => (
+              <button
+                key={name}
+                type="button"
+                className="fl-tag-option"
+                onClick={() => setParts([...parts, { id: uid("bp"), kind: "set", label: name, amountText: "" }])}
+              >
+                + {name}
+              </button>
+            ))}
+          <button
+            type="button"
+            className="fl-tag-option"
+            onClick={() => setParts([...parts, { id: uid("bp"), kind: "set", label: "", amountText: "" }])}
+          >
+            + Other amount
+          </button>
+        </div>
+      </div>
+      </div>
+
+      {error && (
+        <p className="fl-overdue" style={{ marginBottom: 10 }}>
+          <AlertCircle size={12} /> {error}
+        </p>
+      )}
+      <div className="fl-form-actions">
+        <button className="fl-btn secondary" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          className="fl-btn"
+          onClick={() => {
+            const badPct = parts.find((p) => p.kind === "income" && p.mode === "custom" && !(Number(p.pctText) > 0 && Number(p.pctText) <= 100));
+            if (badPct) return setError("Enter a custom % between 1 and 100, or pick Full or Half.");
+            if (parts.some((p) => p.kind === "set" && Number(p.amountText) < 0)) return setError("Amounts can’t be negative.");
+            // A set amount left empty or at 0 is dropped rather than saved.
+            onSave(clean.filter((p) => p.kind === "income" || p.amount > 0));
+          }}
+        >
+          Save
+        </button>
+      </div>
+    </>
+  );
+}
+
 function DebtFreeGoalForm({ initialMonths, onSave, onCancel, onRemove }) {
   const [unit, setUnit] = useState(initialMonths && initialMonths % 12 === 0 ? "years" : "months");
   const [length, setLength] = useState(
@@ -1828,33 +2111,6 @@ function DebtFreeGoalForm({ initialMonths, onSave, onCancel, onRemove }) {
           Cancel
         </button>
         <button className="fl-btn" onClick={() => months >= 1 && onSave(months)}>
-          Save
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function StrategyBudgetForm({ initialBudget, onSave, onCancel }) {
-  const [budget, setBudget] = useState(String(initialBudget || 0));
-  return (
-    <div className="fl-panel">
-      <p className="fl-panel-title fl-serif">Set your monthly budget</p>
-      <div className="fl-field">
-        <label>Total your family can put toward ALL debts combined, each month (₹)</label>
-        <input
-          type="number"
-          inputMode="decimal"
-          value={budget}
-          onChange={(e) => setBudget(e.target.value)}
-          placeholder="0"
-        />
-      </div>
-      <div className="fl-form-actions">
-        <button className="fl-btn secondary" onClick={onCancel}>
-          Cancel
-        </button>
-        <button className="fl-btn" onClick={() => onSave(Number(budget) || 0)}>
           Save
         </button>
       </div>
@@ -2158,7 +2414,7 @@ export default function FamilyLedger() {
   const [editingIncomeId, setEditingIncomeId] = useState(null);
   const [pendingIncomeMonth, setPendingIncomeMonth] = useState(null);
   const [newPerson, setNewPerson] = useState("");
-  const [editingBudget, setEditingBudget] = useState(false);
+  const [showBudgetEditor, setShowBudgetEditor] = useState(false);
   const [editingGoal, setEditingGoal] = useState(false);
   const [toast, setToast] = useState("");
   const toastTimer = useRef(null);
@@ -2317,7 +2573,34 @@ export default function FamilyLedger() {
   const totalPaid = totalAmount - totalRemaining;
   const overallPct = totalAmount > 0 ? Math.min(totalPaid / totalAmount, 1) : 0;
 
+  // Income sources: kept apart from the debts, and never part of their maths.
+  const incomes = data.incomes || [];
+  const incomeRecords = data.incomeRecords || {};
+  const incomeSummaries = incomes.map((s) => ({ ...s, stats: computeIncome(s, incomeRecords[s.id], asOfKey) }));
+  const selectedIncome = incomeSummaries.find((s) => s.id === selectedIncomeId) || null;
+  const activeIncomes = incomeSummaries.filter((s) => (s.startMonth || asOfKey) <= asOfKey);
+  const recordedThisMonth = activeIncomes.filter((s) => incomeRecords[s.id] && incomeRecords[s.id][asOfKey]);
+  const profitThisMonth = recordedThisMonth.reduce((sum, s) => {
+    const r = incomeRecords[s.id][asOfKey];
+    return sum + ((Number(r.income) || 0) - (Number(r.expenses) || 0));
+  }, 0);
+  const usualProfitTotal = activeIncomes.reduce((sum, s) => sum + s.stats.usualProfit, 0);
+
   const strategy = data.strategy || { budget: 0, type: "avalanche" };
+  // The monthly debt budget: the old single amount, or the total of its parts
+  // (set amounts plus shares of income profit, worked out for this month).
+  const incomesById = Object.fromEntries(incomes.map((s) => [s.id, s]));
+  const budgetParts = budgetPartsOf(strategy);
+  const effectiveBudget = budgetTotal(budgetParts, incomesById, asOfKey);
+  // How much of each income source goes toward debts, for the Income screens.
+  const toDebtsByIncome = {};
+  budgetParts.forEach((p) => {
+    if (p.kind !== "income") return;
+    const amount = budgetPartAmount(p, incomesById, asOfKey);
+    const prev = toDebtsByIncome[p.incomeId];
+    toDebtsByIncome[p.incomeId] = { amount: (prev ? prev.amount : 0) + amount, share: (prev ? prev.share : 0) + p.share };
+  });
+  const incomeToDebts = Object.values(toDebtsByIncome).reduce((sum, t) => sum + t.amount, 0);
 
   const strategyLoans = lenders
     .map((l) => {
@@ -2348,7 +2631,7 @@ export default function FamilyLedger() {
 
   const strategyResult =
     strategyLoans.length > 0
-      ? simulateStrategy(strategyLoans, strategy.type, Number(strategy.budget) || 0)
+      ? simulateStrategy(strategyLoans, strategy.type, effectiveBudget)
       : null;
   const statusQuoResult = strategyLoans.length > 0 ? simulateStatusQuo(strategyLoans) : null;
   // Debt-free goal: the monthly budget needed to clear everything by then.
@@ -2380,19 +2663,19 @@ export default function FamilyLedger() {
               {fmt(goalResult.budget)} a month
             </p>
             <p className="fl-card-sub" style={{ marginTop: 4 }}>
-              {goalResult.budget > strategy.budget + 0.5
-                ? `Put this toward debts each month — ${fmt(goalResult.budget - strategy.budget)} more than your budget of ${fmt(strategy.budget)}.`
-                : goalResult.budget < strategy.budget - 0.5
-                ? `Your budget of ${fmt(strategy.budget)} already gets you there — this is the least that would.`
+              {goalResult.budget > effectiveBudget + 0.5
+                ? `Put this toward debts each month — ${fmt(goalResult.budget - effectiveBudget)} more than your budget of ${fmt(effectiveBudget)}.`
+                : goalResult.budget < effectiveBudget - 0.5
+                ? `Your budget of ${fmt(effectiveBudget)} already gets you there — this is the least that would.`
                 : "That’s exactly your budget now."}
             </p>
-            {Math.abs(goalResult.budget - strategy.budget) > 0.5 && (
+            {goalResult.budget > effectiveBudget + 0.5 && (
               <button
                 className="fl-btn"
                 style={{ marginTop: 10, width: "100%" }}
-                onClick={() => updateStrategy({ budget: goalResult.budget })}
+                onClick={() => addExtraToBudget(goalResult.budget - effectiveBudget)}
               >
-                Use {fmt(goalResult.budget)} as my budget
+                Add {fmt(goalResult.budget - effectiveBudget)} to my budget
               </button>
             )}
           </>
@@ -2411,8 +2694,23 @@ export default function FamilyLedger() {
 
   function updateStrategy(fields) {
     persist({ ...data, strategy: { ...strategy, ...fields } });
-    setEditingBudget(false);
+    setShowBudgetEditor(false);
     setEditingGoal(false);
+  }
+
+  // Saves the budget's parts, with their current total kept as strategy.budget.
+  function saveBudgetParts(parts) {
+    updateStrategy({ budgetParts: parts, budget: budgetTotal(parts, incomesById, asOfKey) });
+  }
+
+  // The goal card's "Add ₹X to my budget": tops up (or creates) a set amount for it.
+  function addExtraToBudget(extra) {
+    const i = budgetParts.findIndex((p) => p.kind === "set" && p.label === GOAL_EXTRA_LABEL);
+    saveBudgetParts(
+      i >= 0
+        ? budgetParts.map((p, j) => (j === i ? { ...p, amount: p.amount + extra } : p))
+        : [...budgetParts, { id: uid("bp"), kind: "set", label: GOAL_EXTRA_LABEL, amount: extra }]
+    );
   }
 
   function addLoan(fields) {
@@ -2470,19 +2768,6 @@ export default function FamilyLedger() {
 
   const selectedLoan = lenders.find((l) => l.id === selectedLoanId) || null;
 
-  // Income sources: kept apart from the debts, and never part of their maths.
-  const incomes = data.incomes || [];
-  const incomeRecords = data.incomeRecords || {};
-  const incomeSummaries = incomes.map((s) => ({ ...s, stats: computeIncome(s, incomeRecords[s.id], asOfKey) }));
-  const selectedIncome = incomeSummaries.find((s) => s.id === selectedIncomeId) || null;
-  const activeIncomes = incomeSummaries.filter((s) => (s.startMonth || asOfKey) <= asOfKey);
-  const recordedThisMonth = activeIncomes.filter((s) => incomeRecords[s.id] && incomeRecords[s.id][asOfKey]);
-  const profitThisMonth = recordedThisMonth.reduce((sum, s) => {
-    const r = incomeRecords[s.id][asOfKey];
-    return sum + ((Number(r.income) || 0) - (Number(r.expenses) || 0));
-  }, 0);
-  const usualProfitTotal = activeIncomes.reduce((sum, s) => sum + s.stats.usualProfit, 0);
-
   function addIncome(fields) {
     persist({ ...data, incomes: [...incomes, { id: uid("inc"), ...fields }] });
     setShowAddIncome(false);
@@ -2496,7 +2781,12 @@ export default function FamilyLedger() {
   function deleteIncome(id) {
     const nextRecords = { ...incomeRecords };
     delete nextRecords[id];
-    persist({ ...data, incomes: incomes.filter((s) => s.id !== id), incomeRecords: nextRecords });
+    const next = { ...data, incomes: incomes.filter((s) => s.id !== id), incomeRecords: nextRecords };
+    if (Array.isArray(strategy.budgetParts)) {
+      const parts = strategy.budgetParts.filter((p) => !(p.kind === "income" && p.incomeId === id));
+      next.strategy = { ...strategy, budgetParts: parts, budget: budgetTotal(parts, incomesById, asOfKey) };
+    }
+    persist(next);
     if (selectedIncomeId === id) {
       setSelectedIncomeId(null);
       setView("income");
@@ -2619,6 +2909,7 @@ export default function FamilyLedger() {
                   {usualProfitTotal >= 0
                     ? `usually ${fmt(usualProfitTotal)} profit a month`
                     : `usually ${fmt(-usualProfitTotal)} loss a month`}
+                  {incomeToDebts > 0.5 ? ` · ${fmt(incomeToDebts)} of it goes to debts` : ""}
                 </p>
               </div>
             )}
@@ -2762,6 +3053,7 @@ export default function FamilyLedger() {
                         ? `usually ${fmt(s.stats.usualProfit)}/mo profit`
                         : `usually ${fmt(-s.stats.usualProfit)}/mo loss`}
                       {s.incomeDay ? ` · comes in on the ${ordinal(s.incomeDay)}` : ""}
+                      {toDebtsByIncome[s.id] ? ` · ${fmt(toDebtsByIncome[s.id].amount)}/mo to debts` : ""}
                     </div>
                     {categoryLabel(s.category, INCOME_CATEGORIES) && (
                       <div className="fl-chip-row" style={{ marginTop: 5 }}>
@@ -2824,6 +3116,12 @@ export default function FamilyLedger() {
                         {fmt(expectedIncomeFor(s, asOfKey))} in, {fmt(s.usualExpenses)} out
                         {s.incomeDay ? ` · comes in on the ${ordinal(s.incomeDay)}` : ""}
                       </p>
+                      {toDebtsByIncome[s.id] && (
+                        <p className="fl-card-sub">
+                          Goes toward debts: {fmt(toDebtsByIncome[s.id].amount)} a month ({shareLabel(toDebtsByIncome[s.id].share)}) — change
+                          it from the budget on the Strategy tab
+                        </p>
+                      )}
                       {hasIncomeGrowth(s) && (
                         <p className="fl-card-sub">
                           Income rises {incomeGrowthLabel(s.growth)}
@@ -2983,31 +3281,37 @@ export default function FamilyLedger() {
           <>
             <p className="fl-section-title">Monthly budget for all debts</p>
 
-            {editingBudget ? (
-              <StrategyBudgetForm
-                initialBudget={strategy.budget}
-                onCancel={() => setEditingBudget(false)}
-                onSave={(budget) => updateStrategy({ budget })}
-              />
-            ) : (
-              <div className="fl-summary">
-                <div className="fl-card-row">
-                  <p className="fl-summary-label">You can put toward debts each month</p>
-                  <button className="fl-icon-btn" onClick={() => setEditingBudget(true)} aria-label="Edit budget">
-                    <Pencil size={14} />
-                  </button>
-                </div>
-                <p className="fl-summary-value fl-mono">{fmt(strategy.budget)}</p>
+            <div className="fl-summary">
+              <div className="fl-card-row">
+                <p className="fl-summary-label">You can put toward debts each month</p>
+                <button className="fl-icon-btn" onClick={() => setShowBudgetEditor(true)} aria-label="Edit budget">
+                  <Pencil size={14} />
+                </button>
               </div>
-            )}
+              <p className="fl-summary-value fl-mono">{fmt(effectiveBudget)}</p>
+              {(budgetParts.length > 1 || budgetParts.some((p) => p.kind === "income")) && (
+                <div className="fl-budget-breakdown">
+                  {budgetParts.map((p) => (
+                    <div className="fl-budget-line" key={p.id}>
+                      <span>
+                        {p.kind === "income"
+                          ? `${incomesById[p.incomeId] ? incomesById[p.incomeId].name : "Removed income source"} · ${shareLabel(p.share)}`
+                          : p.label}
+                      </span>
+                      <span className="fl-mono">{fmt(budgetPartAmount(p, incomesById, asOfKey))}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {activeIncomes.length > 0 && (
               <p className="fl-card-sub" style={{ marginTop: -6, marginBottom: 12 }}>
-                {usualProfitTotal >= 0
-                  ? `Your income sources usually make ${fmt(usualProfitTotal)} profit a month.`
-                  : `Your income sources usually run at a ${fmt(-usualProfitTotal)} loss a month.`}{" "}
-                It isn’t added to this budget automatically — edit the budget if you’d like to put some of it toward
-                debts.
+                {usualProfitTotal < 0
+                  ? `Your income sources usually run at a ${fmt(-usualProfitTotal)} loss a month.`
+                  : incomeToDebts > 0.5
+                  ? `Your income sources usually make ${fmt(usualProfitTotal)} profit a month — ${fmt(incomeToDebts)} of it goes toward debts.`
+                  : `Your income sources usually make ${fmt(usualProfitTotal)} profit a month. None of it is in this budget yet — tap ✎ to add a share.`}
               </p>
             )}
 
@@ -3039,7 +3343,7 @@ export default function FamilyLedger() {
             {strategyLoans.length > 0 && strategyResult && !strategyResult.feasible && (
               <div className="fl-panel">
                 <p className="fl-card-sub">
-                  Your budget of {fmt(strategy.budget)} doesn’t cover the minimum payments across your debts.
+                  Your budget of {fmt(effectiveBudget)} doesn’t cover the minimum payments across your debts.
                   You need at least {fmt(strategyResult.minRequired)}/month before a strategy can be planned.
                 </p>
               </div>
@@ -3338,6 +3642,19 @@ export default function FamilyLedger() {
       {showAddLoan && (
         <Sheet title="Add a new debt" onClose={() => setShowAddLoan(false)}>
           <LenderForm inSheet onCancel={() => setShowAddLoan(false)} onSave={addLoan} />
+        </Sheet>
+      )}
+
+      {showBudgetEditor && (
+        <Sheet title="Monthly budget" onClose={() => setShowBudgetEditor(false)}>
+          <BudgetEditor
+            initialParts={budgetParts}
+            incomes={incomeSummaries}
+            people={people}
+            asOfKey={asOfKey}
+            onCancel={() => setShowBudgetEditor(false)}
+            onSave={saveBudgetParts}
+          />
         </Sheet>
       )}
 

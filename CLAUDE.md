@@ -31,7 +31,11 @@ An income source can have an optional `incomeDay` (day of the month it usually a
 
 ## Debt-free goal
 
-On the Strategy tab, "Debt-free in ✎" sets `strategy.targetMonths`. `budgetForTarget` binary-searches the smallest monthly budget, rounded up to ₹100, at which `simulateStrategy` clears everything within the goal. It only calls the simulation and never changes it. If even paying everything off at once is too slow (a repayment plan runs on its own schedule), it reports the soonest possible instead. The goal card offers "Use ₹X as my budget". This was verified on random loan sets, where the result met the goal and ₹100 less didn't.
+On the Strategy tab, "Debt-free in ✎" sets `strategy.targetMonths`. `budgetForTarget` binary-searches the smallest monthly budget, rounded up to ₹100, at which `simulateStrategy` clears everything within the goal. It only calls the simulation and never changes it. If even paying everything off at once is too slow (a repayment plan runs on its own schedule), it reports the soonest possible instead. The goal card offers "Add ₹X to my budget" (see the budget parts section below). This was verified on random loan sets, where the result met the goal and ₹100 less didn't.
+
+## Debt budget made of parts
+
+The Strategy tab's monthly budget can be built from parts in `strategy.budgetParts`: `{ kind: "set", label, amount }` or `{ kind: "income", incomeId, share }`, where `share` is 0–1 of that income source's usual profit this month. The effective budget is `budgetTotal(budgetPartsOf(strategy), incomesById, asOfKey)`, recomputed every time, so income shares follow profit changes and yearly rises. With no parts saved (older data), `budgetPartsOf` treats the single `strategy.budget` as one "Set amount" part, so the total is exactly the old number. `strategy.budget` is still written as a snapshot of the total whenever parts are saved. Deleting an income source removes its budget parts. The goal card's "Add ₹X to my budget" tops up a set part labelled `GOAL_EXTRA_LABEL`. It's edited in the `BudgetEditor` sheet. The Income list, the source page and the Dashboard show each source's share going to debts.
 
 ## Testing without touching live data
 
