@@ -1,12 +1,28 @@
-# Family Ledger
+# Ledger
 
-A React + Vite app for tracking family loans/debts between a few people, with Supabase for realtime shared storage (the whole app's data lives in one JSON blob in a single Supabase table row). Almost everything lives in one file: `src/App.jsx` — pure calculation functions at the top, all CSS in a `const styles` template string, then the component and its JSX.
+A React + Vite app for tracking debts and income, with a payoff Strategy. Since 2026-09-29 it's **user-based**: each person signs in (Supabase Auth, 6-digit email code — links don't work inside the iOS Home Screen app), owns their own items, and can share any single debt or income source with other people by email, as "can edit" or "view only". It started as a shared family ledger in one JSON row, and that old `ledger` table is only read once to import, then locked with `supabase/lock-old-ledger.sql`.
+
+## Files
+
+- `src/calc.js`: all pure calculations (dates, balances, plans, income, Strategy). Tested by `src/calc.test.js`, which includes a golden snapshot of Strategy results. Calculation changes are high-stakes. If one moves the snapshot on purpose, review the diff and update it with `npx vitest run -u`.
+- `src/store.js`: the only code that talks to the database. `loadEverything` → `assemble` builds the same in-memory shape the app always used (`{ people, lenders, payments, strategy, incomes, incomeRecords }`) plus `meta` (row versions, owner, shares). `saveChanges(prev, next, …)` diffs two states and writes only the changed rows, with version checks that throw `ConflictError`. Deletes are soft (`deleted_at`), and entries are kept, so Undo and "Recently deleted" restore everything. `importOldLedger` copies the old family ledger into the signed-in person's account with fresh UUIDs, remapping budget-part income ids. After that, `markOldLedgerImported` adds `importedBy`/`importedAt` to the old row, so everyone else is told to ask for shares instead of importing a duplicate copy.
+- `src/changes.js`: `undoOf(prev, next, current)` reverses only what one save changed, never someone else's change made meanwhile. Tested in `src/changes.test.js`.
+- `src/calendar.js` (.ics reminders) and `src/activity.js` (history rows → sentences), tested in `src/helpers.test.js`.
+- `src/styles.js`: all CSS. `src/App.jsx`: the `App` root (session → `SignIn` or `Ledger`) and every screen. `persist(next)` in `Ledger` is the one way to save: it shows the change at once, queues `store.saveChanges`, and offers Undo. `dataRef` always holds the latest data, because an Undo tapped seconds later must diff against what's on screen now (a stale-closure bug here once made Undo change only the screen).
+- `supabase/accounts-setup.sql`: tables `items` (kind debt/income/expense, `data` jsonb, version, soft delete), `item_shares` (by lower-cased email, role editor/viewer), `entries` (one per item per month), `user_settings`, `history` (written only by triggers). It also sets row-level security via security-definer helpers (`can_see_item`, `can_edit_item`, `owns_item`) and triggers that stamp the owner, bump versions and forbid changing owners or non-owners deleting. It's safe to re-run.
+- `npm run build` runs `vitest run` first, so failing tests block a Vercel deploy.
+
+## Testing without touching live data
+
+`.env.local` points at the live database, so never test saves in the normal dev server. The accounts version is tested against a local stand-in for Supabase: PGlite (real Postgres in Node) with an `auth` schema, `anon`/`authenticated` roles and JWT claims emulated. It runs `accounts-setup.sql`, serves `/auth/v1` (email codes written to a local `codes.json`, never emailed) and the `/rest/v1` PostgREST requests the app makes, so the real access rules apply. Run Vite with `VITE_SUPABASE_URL=http://127.0.0.1:<port>`, since shell env vars override `.env.local`. Live updates (websocket) aren't emulated. The access rules themselves were checked as several users (owner, editor, viewer, stranger, signed-out) in a separate PGlite script.
 
 ## Design system
 
-The UI is a "leather passbook" theme (leather, paper, and ribbon-bookmark textures, brass accents), matched to an approved design mockup. In `src/App.jsx`:
+The UI is a "leather passbook" theme (leather, paper, and ribbon-bookmark textures, brass accents), matched to an approved design mockup.
 
-- `const styles` (~line 331) holds all CSS, including SVG grain-texture filter defs referenced via `url(#grainLeather)` etc. — filter regions must stay tightly clipped or the texture bleeds past its element.
+- `src/styles.js` holds all CSS. The SVG grain-texture filter defs referenced via `url(#grainLeather)` etc. are in the `Ledger` JSX. Filter regions must stay tightly clipped, or the texture bleeds past its element.
+- Tabs: Dashboard (totals, then "This month": payments due and income expected, by date; tapping a row opens a pre-filled record sheet, and so do the due/overdue tags on debt cards), Debts, Income, Strategy, Account (sign out, names for payments, calendar reminders, Activity, Recently deleted, backup download, import of the old ledger).
+- Sharing chips use `.chip-shared` (dashed outline), so they never read as a status: "shared · N" on your items, "from <owner>" on items shared with you. A viewer gets no edit or record controls, and only the owner gets delete.
 - `.fl-shell` is the full-screen app container, pinned with `position: fixed; top: 0; bottom: 0`. In standalone ("Add to Home Screen") mode it switches to `position: relative; height: 100lvh`, and `.fl-bottomnav` switches from fixed to absolute (via `@media (display-mode: standalone)`, plus an `html.fl-standalone` class set from `navigator.standalone` in `index.html`). This works around an iOS 26+ bug where, in standalone mode, `bottom: 0`, `100%`, `100dvh` and `100svh` all come up short by the status-bar height, leaving a strip below the tab bar. Only `100lvh` measures the full screen. Sizing the fixed shell to `100lvh` alone was tried and failed: iOS still only drew it down to the false edge, cutting off the tab-bar labels. The shell has to be in normal flow so the document itself is full height. Page-level bounce (`overscroll-behavior: none` on html/body) is off in standalone so dragging the header or tab bar doesn't rubber-band the whole app. The page background behind the app is leather brown, so if the strip ever comes back it will look brown, not white.
 - `.fl-topbar` / `.fl-bottomnav` are the leather header and tab bar, padded with `env(safe-area-inset-top/bottom)` for the notch and home-indicator.
 - Adding: a brass "+" (`.fl-topbar-add`) sits in the header’s top-right on the Debts and Income tabs only (not the Dashboard, by request), replacing the decorative rivets there. It opens the `Sheet` component (`.fl-sheet`), a full-screen page absolutely positioned inside `.fl-shell` above the tab bar, with its own leather header, a ✕ close button and a scrolling body padded for safe areas. Editing still happens inline.
@@ -49,10 +65,6 @@ The Strategy simulation follows the budget month by month. `budgetByMonth` evalu
 
 `computeSchedule` already adds the current month's interest to each balance, so `simulateStrategy` and `simulateStatusQuo` add no interest in their month 1 ("Pay this for <current month>"). Interest accrues from month 2. The app passes `currentInterest` (this month's interest) so a protected loan's month-1 floor still covers it. This was fixed on 2026-09-29, when the old code added a second month's interest. It was verified by showing that the new result from today's balance equals the old result from last month's balance, with the same payments and payoff months and interest lower by exactly one month. On the family's data this changed the plan from 3y8m to 3y7m and total interest by about ₹53k, and this month's payments didn't change.
 
-## Testing without touching live data
-
-`.env.local` points at the live family database, so never click Save in the normal dev server. To test the form end-to-end, run a small local stand-in for the Supabase `ledger` table with made-up loans (GET returns `[{payload}]`, POST upsert stores it and returns 201, plus CORS). Then start a second Vite on another port with `VITE_SUPABASE_URL=http://127.0.0.1:<port> VITE_SUPABASE_ANON_KEY=test`, since shell env vars override `.env.local`. Confirm no requests go to supabase.co before saving anything.
-
 ## If the bottom strip returns
 
 The normal-flow `100lvh` fix for the bottom strip (above) was confirmed working on the real phone in Home Screen mode on 2026-09-29, and Safari tab mode was unaffected. If a gap ever comes back at a screen edge there, first check that `index.html`'s `<meta name="viewport">` still includes `viewport-fit=cover`, which the page needs to draw under the safe areas at all.
@@ -60,5 +72,6 @@ The normal-flow `100lvh` fix for the bottom strip (above) was confirmed working 
 ## Working with this project
 
 - The project owner isn't a developer — explain changes in plain language, not jargon.
-- This holds real, live family loan balances. Treat any change to the calculation logic (interest, schedules, payoff strategy simulations) as high-stakes: verify it before calling it done.
+- This holds real, live loan balances. Treat any change to the calculation logic (interest, schedules, payoff strategy simulations) as high-stakes: verify it before calling it done. The same goes for `supabase/accounts-setup.sql`: re-run the multi-user access checks after any change to it.
+- The owner runs SQL in the Supabase SQL Editor and changes dashboard settings themselves. Never handle the `service_role` key.
 - Changes get tested on a real phone, both as a normal Safari tab and as an "Add to Home Screen" app — these can behave differently (see the fixed-positioning note above), so flag anything that might diverge between the two.

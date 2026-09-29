@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from "react";
 import {
   Home,
   Landmark,
-  Users,
   Plus,
   ChevronRight,
   ChevronLeft,
@@ -13,1331 +12,61 @@ import {
   Target,
   TrendingUp,
   AlertCircle,
+  User,
+  Share2,
+  LogOut,
+  CalendarPlus,
+  Download,
+  RotateCcw,
+  Mail,
 } from "lucide-react";
-import { supabase, LEDGER_ROW_ID } from "./supabaseClient.js";
+import { supabase } from "./supabaseClient.js";
+import * as store from "./store.js";
+import { buildCalendar } from "./calendar.js";
+import { describeChange } from "./activity.js";
+
+import {
+  uid,
+  fmt,
+  pad2,
+  currentMonthKey,
+  monthKeyAdd,
+  monthsBetween,
+  monthKeyLabel,
+  monthKeyShort,
+  ordinal,
+  CATEGORIES,
+  INCOME_CATEGORIES,
+  categoryLabel,
+  defaultData,
+  migrateData,
+  computeSchedule,
+  getCurrentPayment,
+  getSuggestedMonth,
+  spreadPlanAmounts,
+  planDueFor,
+  upcomingPlanAmounts,
+  planShortfall,
+  planYearlyRate,
+  firstIncomeRise,
+  hasIncomeGrowth,
+  expectedIncomeFor,
+  incomeGrowthLabel,
+  nextIncomeRise,
+  computeIncome,
+  monthsLabel,
+  month1Interest,
+  simulateStrategy,
+  simulateStatusQuo,
+  GOAL_EXTRA_LABEL,
+  budgetPartsOf,
+  budgetPartAmount,
+  budgetTotal,
+  shareLabel,
+  budgetForTarget,
+} from "./calc.js";
+import { styles } from "./styles.js";
 
-function uid(prefix) {
-  return prefix + "-" + Math.random().toString(36).slice(2, 9);
-}
-
-function fmt(n) {
-  const v = Math.round(Number(n) || 0);
-  return "₹" + v.toLocaleString("en-IN");
-}
-
-function pad2(n) {
-  return String(n).padStart(2, "0");
-}
-
-// "2026-09" style keys: sortable as strings, easy to store as object keys.
-function currentMonthKey() {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
-}
-
-function monthKeyAdd(key, n) {
-  const [y, m] = key.split("-").map(Number);
-  const total = y * 12 + (m - 1) + n;
-  const ny = Math.floor(total / 12);
-  const nm = (((total % 12) + 12) % 12) + 1;
-  return `${ny}-${pad2(nm)}`;
-}
-
-function monthsBetween(a, b) {
-  const [ay, am] = a.split("-").map(Number);
-  const [by, bm] = b.split("-").map(Number);
-  return by * 12 + bm - (ay * 12 + am);
-}
-
-function monthKeyLabel(key) {
-  const [y, m] = key.split("-").map(Number);
-  const d = new Date(y, m - 1, 1);
-  return d.toLocaleDateString("en-GB", { month: "long", year: "numeric" });
-}
-
-function monthKeyShort(key) {
-  const [y, m] = key.split("-").map(Number);
-  const d = new Date(y, m - 1, 1);
-  return d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
-}
-
-function ordinal(n) {
-  const s = ["th", "st", "nd", "rd"];
-  const v = n % 100;
-  return n + (s[(v - 20) % 10] || s[v] || s[0]);
-}
-
-// What kind of borrowing a loan is, shown as a tag. Purely a label — it never
-// affects any calculation. Stored as `category`; the separate `type` field
-// ("interest" / "fixed") is what controls interest.
-const CATEGORIES = [
-  { id: "loan", label: "Loan" },
-  { id: "mortgage", label: "Mortgage" },
-  { id: "car", label: "Car" },
-  { id: "gold", label: "Gold loan" },
-  { id: "overdraft", label: "Overdraft" },
-  { id: "credit-card", label: "Credit card" },
-  { id: "family", label: "Family & friends" },
-  { id: "other", label: "Other" },
-];
-
-// Same idea for income sources (see computeIncome).
-const INCOME_CATEGORIES = [
-  { id: "business", label: "Business" },
-  { id: "shop", label: "Shop" },
-  { id: "real-estate", label: "Real estate" },
-  { id: "rental", label: "Rental" },
-  { id: "farm", label: "Farm" },
-  { id: "vehicle", label: "Vehicle hire" },
-  { id: "other", label: "Other" },
-];
-
-function categoryLabel(id, list = CATEGORIES) {
-  const c = list.find((c) => c.id === id);
-  return c ? c.label : null;
-}
-
-function defaultData() {
-  const asOf = currentMonthKey();
-  return {
-    people: ["Uppa", "Nahas", "Riyas"],
-    lenders: [
-      {
-        id: "pnb-housing",
-        name: "PNB Housing Loan",
-        type: "interest",
-        totalAmount: 1500000,
-        annualRate: 0,
-        minPayment: 0,
-        dueDay: null,
-        startMonth: asOf,
-      },
-      { id: "pnb-od", name: "PNB OD", type: "interest", totalAmount: 0, annualRate: 0, minPayment: 0, dueDay: null, startMonth: asOf },
-      { id: "sathyn", name: "Sathyn", type: "fixed", totalAmount: 0, annualRate: 0, minPayment: 0, dueDay: null, startMonth: asOf },
-      { id: "mynaakam", name: "Mynaakam", type: "fixed", totalAmount: 0, annualRate: 0, minPayment: 0, dueDay: null, startMonth: asOf },
-      { id: "kochumaash", name: "Kochumaash", type: "fixed", totalAmount: 0, annualRate: 0, minPayment: 0, dueDay: null, startMonth: asOf },
-    ],
-    payments: {
-      "pnb-housing": { [asOf]: { amounts: { Uppa: 0, Nahas: 10000, Riyas: 5000 } } },
-    },
-    strategy: { budget: 15000, type: "avalanche" },
-  };
-}
-
-// Brings older saved data up to the current shape:
-// - payments used to be a plain array ("Month 1, Month 2, ...") — this maps
-//   that array onto real calendar months, ending at the current month.
-// - every loan gets a type ("interest" keeps existing math exactly as before
-//   when its rate is 0, so this never changes anyone's balance), a dueDay,
-//   and a startMonth.
-function migrateData(raw) {
-  let changed = false;
-  const asOf = currentMonthKey();
-
-  const lenders = (raw.lenders || []).map((l) => {
-    const next = { ...l };
-    if (!next.type) {
-      next.type = "interest";
-      changed = true;
-    }
-    if (next.dueDay === undefined) {
-      next.dueDay = null;
-      changed = true;
-    }
-    if (next.minPayment === undefined) {
-      next.minPayment = 0;
-      changed = true;
-    }
-    if (next.protectFromGrowth === undefined) {
-      next.protectFromGrowth = false;
-      changed = true;
-    }
-    if (!next.startMonth) {
-      next.startMonth = asOf;
-      changed = true;
-    }
-    return next;
-  });
-
-  const payments = {};
-  Object.keys(raw.payments || {}).forEach((loanId) => {
-    const val = raw.payments[loanId];
-    if (Array.isArray(val)) {
-      changed = true;
-      const n = val.length;
-      const map = {};
-      for (let i = 0; i < n; i++) {
-        map[monthKeyAdd(asOf, i - (n - 1))] = { amounts: val[i] || {} };
-      }
-      payments[loanId] = map;
-      if (n > 0) {
-        const lender = lenders.find((l) => l.id === loanId);
-        if (lender) lender.startMonth = monthKeyAdd(asOf, -(n - 1));
-      }
-    } else if (val && typeof val === "object") {
-      payments[loanId] = val;
-    } else {
-      payments[loanId] = {};
-    }
-  });
-
-  const strategy = raw.strategy || { budget: 0, type: "avalanche" };
-
-  return { data: { ...raw, lenders, payments, strategy }, changed };
-}
-
-// Walks every real month from the loan's start to now. Interest (if any)
-// is added every month whether or not that month has a recorded payment —
-// that's what makes an unpaid month still grow the balance.
-function computeSchedule(lender, entriesMap, asOfKey) {
-  const start = lender.startMonth || asOfKey;
-  const rate = lender.type === "fixed" ? 0 : (Number(lender.annualRate) || 0) / 12;
-  let balance = Number(lender.totalAmount) || 0;
-  const rows = [];
-  const span = Math.max(monthsBetween(start, asOfKey) + 1, 0);
-
-  for (let i = 0; i < span; i++) {
-    const key = monthKeyAdd(start, i);
-    const opening = balance;
-    const interest = opening * rate;
-    balance = opening + interest;
-    const entry = entriesMap ? entriesMap[key] : null;
-    const amounts = entry ? entry.amounts || {} : {};
-    const totalPaid = Object.values(amounts).reduce((s, v) => s + (Number(v) || 0), 0);
-    balance = Math.max(balance - totalPaid, 0);
-    rows.push({ key, opening, interest, totalPaid, remaining: balance, amounts, recorded: !!entry });
-  }
-
-  return { rows, finalBalance: balance, nextInterest: balance * rate };
-}
-
-// What this loan is actually being paid right now: the most recently
-// recorded month's total, or its minimum/fixed payment if nothing recorded yet.
-function getCurrentPayment(lender, entriesMap) {
-  const keys = Object.keys(entriesMap || {}).sort();
-  if (keys.length > 0) {
-    const last = entriesMap[keys[keys.length - 1]];
-    const amounts = last.amounts || {};
-    return Object.values(amounts).reduce((s, v) => s + (Number(v) || 0), 0);
-  }
-  return Number(lender.minPayment) || 0;
-}
-
-// The oldest month (from loan start to now) that has no recorded payment
-// yet — recording naturally happens oldest-first, but the picker lets you
-// pick any month if you'd rather.
-function getSuggestedMonth(lender, entriesMap, asOfKey) {
-  const start = lender.startMonth || asOfKey;
-  const span = Math.max(monthsBetween(start, asOfKey) + 1, 0);
-  for (let i = 0; i < span; i++) {
-    const key = monthKeyAdd(start, i);
-    if (!entriesMap[key]) return key;
-  }
-  return asOfKey;
-}
-
-// ---- Repayment plans ----
-// Some lenders don't quote an interest rate: they hand over an amount, agree a
-// larger total to repay, and set a monthly amount that rises over a term. Such
-// a debt is saved as a no-interest ("fixed") debt whose totalAmount is the
-// total to repay, plus repaymentPlan: { received, amounts }, where amounts[i]
-// is what's due in month i of the term (month 0 = termStart, or startMonth if
-// unset). The balance is simply total to repay minus payments; paying early
-// never shrinks the total.
-
-// Evenly rising amounts: starts at `first` and goes up by the same step each
-// month so all `months` payments add up to exactly `total`. Rounded to whole
-// rupees, with the last month absorbing the rounding. Null if impossible (bad
-// inputs, or it would need a negative payment).
-function spreadPlanAmounts(total, first, months) {
-  if (!(total > 0) || !(first >= 0) || !(months >= 1)) return null;
-  if (months === 1) return [Math.round(total)];
-  const step = (total - months * first) / ((months * (months - 1)) / 2);
-  const amounts = [];
-  for (let i = 0; i < months - 1; i++) amounts.push(Math.round(first + i * step));
-  amounts.push(Math.round(total - amounts.reduce((s, v) => s + v, 0)));
-  return amounts.some((a) => a < 0) ? null : amounts;
-}
-
-// What the plan says is due in a given month (0 outside the plan).
-function planDueFor(lender, key) {
-  const plan = lender.repaymentPlan;
-  if (!plan) return 0;
-  const i = monthsBetween(lender.termStart || lender.startMonth, key);
-  return i >= 0 && i < plan.amounts.length ? plan.amounts[i] : 0;
-}
-
-// What's due each month from `fromKey` to the plan's last month (empty once
-// the plan has ended).
-function upcomingPlanAmounts(lender, fromKey) {
-  const plan = lender.repaymentPlan;
-  if (!plan) return [];
-  const end = monthKeyAdd(lender.termStart || lender.startMonth, plan.amounts.length - 1);
-  const out = [];
-  for (let k = fromKey; monthsBetween(k, end) >= 0; k = monthKeyAdd(k, 1)) out.push(planDueFor(lender, k));
-  return out;
-}
-
-// How far payments trail the plan: everything due before this month minus
-// everything paid before it. The current month isn't counted until it's over.
-function planShortfall(lender, rows, asOfKey) {
-  let due = 0;
-  let paid = 0;
-  rows.forEach((r) => {
-    if (r.key < asOfKey) {
-      due += planDueFor(lender, r.key);
-      paid += r.totalPaid;
-    }
-  });
-  return Math.max(due - paid, 0);
-}
-
-// The yearly interest rate an ordinary loan would need to cost the same, for
-// comparing a plan with other debts: the monthly rate at which the payments
-// (the first one a month after the money arrives) exactly repay what was
-// received, times 12. Display only. Null when the plan charges nothing.
-function planYearlyRate(received, amounts) {
-  const total = amounts.reduce((s, v) => s + v, 0);
-  if (!(received > 0) || total <= received) return null;
-  const presentValue = (r) => amounts.reduce((s, p, i) => s + p / Math.pow(1 + r, i + 1), 0);
-  let lo = 0;
-  let hi = 1;
-  for (let i = 0; i < 100; i++) {
-    const mid = (lo + hi) / 2;
-    if (presentValue(mid) > received) lo = mid;
-    else hi = mid;
-  }
-  return ((lo + hi) / 2) * 12;
-}
-
-// ---- Income sources ----
-// A business, property, farm etc. that brings money in. Saved in data.incomes
-// as { id, name, category, capital, startMonth, usualIncome, usualExpenses,
-// incomeDay, growth }, with actual figures in data.incomeRecords[id]["YYYY-MM"] = {
-// income, expenses }. Entirely separate from the debts: nothing here feeds
-// into any balance or the Strategy plan.
-//
-// incomeDay (optional): day of the month the income usually arrives — display only.
-//
-// growth (optional): { pct, everyMonths, firstMonth } — the usual income rises
-// by pct every `everyMonths` (entered in years), first in firstMonth (null = one period after the
-// start month). Each rise builds on the last, like interest. Expenses don't rise.
-
-// When a source's first income rise happens.
-function firstIncomeRise(source) {
-  const g = source.growth;
-  return g.firstMonth || monthKeyAdd(source.startMonth || currentMonthKey(), g.everyMonths);
-}
-
-function hasIncomeGrowth(source) {
-  const g = source.growth;
-  return !!g && g.pct > 0 && g.everyMonths >= 1;
-}
-
-// The usual income expected in a given month, with any rises applied by then.
-function expectedIncomeFor(source, key) {
-  const base = Number(source.usualIncome) || 0;
-  if (!hasIncomeGrowth(source)) return base;
-  const since = monthsBetween(firstIncomeRise(source), key);
-  if (since < 0) return base;
-  const rises = 1 + Math.floor(since / source.growth.everyMonths);
-  return base * Math.pow(1 + source.growth.pct, rises);
-}
-
-// "5% every year", "10% every 6 months".
-function incomeGrowthLabel(growth) {
-  const pct = Math.round(growth.pct * 100 * 100) / 100;
-  const m = growth.everyMonths;
-  const every =
-    m % 12 === 0 ? (m === 12 ? "year" : `${m / 12} years`) : m === 1 ? "month" : `${m} months`;
-  return `${pct}% every ${every}`;
-}
-
-// The next month (after `asOfKey`) the income rises, and what it rises to.
-function nextIncomeRise(source, asOfKey) {
-  if (!hasIncomeGrowth(source)) return null;
-  const first = firstIncomeRise(source);
-  const since = monthsBetween(first, asOfKey);
-  const key = since < 0 ? first : monthKeyAdd(first, (Math.floor(since / source.growth.everyMonths) + 1) * source.growth.everyMonths);
-  return { key, amount: expectedIncomeFor(source, key) };
-}
-
-// Month-by-month figures from the start month to now. Only recorded months
-// count toward the totals — a month nobody has recorded yet counts as nothing,
-// not as the usual figures.
-function computeIncome(source, records, asOfKey) {
-  const start = source.startMonth || asOfKey;
-  const span = Math.max(monthsBetween(start, asOfKey) + 1, 0);
-  const rows = [];
-  let totalIncome = 0;
-  let totalExpenses = 0;
-  for (let i = 0; i < span; i++) {
-    const key = monthKeyAdd(start, i);
-    const rec = records ? records[key] : null;
-    const income = rec ? Number(rec.income) || 0 : 0;
-    const expenses = rec ? Number(rec.expenses) || 0 : 0;
-    totalIncome += income;
-    totalExpenses += expenses;
-    rows.push({ key, recorded: !!rec, income, expenses, profit: income - expenses });
-  }
-  const totalProfit = totalIncome - totalExpenses;
-  const capital = Number(source.capital) || 0;
-  const usualExpenses = Number(source.usualExpenses) || 0;
-  // This month's usual profit (with any income rises applied so far).
-  const usualProfit = expectedIncomeFor(source, asOfKey) - usualExpenses;
-  const stillToEarnBack = Math.max(capital - totalProfit, 0);
-  // Months until the capital is earned back if the usual profit keeps coming
-  // in: 0 once it has been (or there's no capital), null if the usual figures
-  // never make it back (checked 100 years out).
-  let monthsToPayback = 0;
-  if (capital > 0 && stillToEarnBack > 0.5) {
-    if (!hasIncomeGrowth(source)) {
-      monthsToPayback = usualProfit > 0 ? Math.ceil(stillToEarnBack / usualProfit) : null;
-    } else {
-      let earned = 0;
-      let n = 0;
-      while (earned < stillToEarnBack - 0.5 && n < 1200) {
-        n++;
-        earned += expectedIncomeFor(source, monthKeyAdd(asOfKey, n)) - usualExpenses;
-      }
-      monthsToPayback = earned >= stillToEarnBack - 0.5 ? n : null;
-    }
-  }
-  return {
-    rows,
-    totalIncome,
-    totalExpenses,
-    totalProfit,
-    capital,
-    usualProfit,
-    recoveredPct: capital > 0 ? Math.min(Math.max(totalProfit, 0) / capital, 1) : 0,
-    stillToEarnBack,
-    monthsToPayback,
-  };
-}
-
-function monthsLabel(m) {
-  if (m == null) return "—";
-  if (m < 1) return "paid off";
-  if (m < 12) return m + (m === 1 ? " month" : " months");
-  const y = Math.floor(m / 12);
-  const rem = Math.round(m % 12);
-  return y + (y === 1 ? " yr" : " yrs") + (rem > 0 ? " " + rem + (rem === 1 ? " mo" : " mos") : "");
-}
-
-// Debt avalanche (highest rate first) or snowball (smallest balance first):
-// pay each loan's minimum, then throw every spare rupee at the top-priority
-// loan, rolling it into the next one once it's cleared.
-// A loan with a `schedule` (a repayment plan: what's due each month from now
-// on) is paid exactly that each month, and whatever's left once it runs out.
-// It never gets extra money, since paying a plan early doesn't cut its total.
-//
-// Month 1 is the current month. Balances come from computeSchedule, which has
-// already added this month's interest, so month 1 adds no interest of its own;
-// interest accrues from month 2 on. `currentInterest` (this month's interest,
-// already in the balance) is what a protected loan's month-1 floor must cover.
-function month1Interest(l) {
-  return l.currentInterest != null ? l.currentInterest : l.balance * (l.rate / 12);
-}
-
-// `budget` is a number, or a function giving month m's budget (m = 1 is this
-// month) when part of it follows income that rises over time.
-function simulateStrategy(loans, strategyType, budget, maxMonths = 600) {
-  const budgetFor = typeof budget === "function" ? budget : () => budget;
-  let state = loans.map((l) => ({ ...l }));
-  // A "protected" loan's real floor for month 1 is whichever is bigger: its stated
-  // minimum, or this month's interest — that's what actually stops it from growing,
-  // not just its (possibly 0) minPayment.
-  // A repayment plan counts at its largest upcoming payment, so a rising plan
-  // can't outgrow the budget later on.
-  const initialMinSum = state.reduce((s, l) => {
-    const floor = l.schedule
-      ? Math.min(l.balance, l.schedule.length > 0 ? Math.max(...l.schedule) : l.balance)
-      : l.protectFromGrowth
-      ? Math.max(l.minPayment || 0, month1Interest(l))
-      : l.minPayment || 0;
-    return s + floor;
-  }, 0);
-  if (initialMinSum > budgetFor(1) + 0.5) {
-    return { feasible: false, minRequired: initialMinSum };
-  }
-
-  let totalInterest = 0;
-  let month = 0;
-  const payoffMonth = {};
-  let firstMonthPlan = null;
-
-  while (state.some((l) => l.balance > 0.5) && month < maxMonths) {
-    month++;
-    const interestThisMonth = {};
-    state.forEach((l) => {
-      if (l.balance > 0.5) {
-        if (month === 1) {
-          // Already in the balance — only needed for a protected loan's floor.
-          interestThisMonth[l.id] = month1Interest(l);
-          return;
-        }
-        const interest = l.balance * (l.rate / 12);
-        interestThisMonth[l.id] = interest;
-        l.balance += interest;
-        totalInterest += interest;
-      }
-    });
-
-    let budgetLeft = budgetFor(month);
-    const plan = {};
-    const active = state.filter((l) => l.balance > 0.5);
-
-    active.forEach((l) => {
-      // A protected loan always gets at least this month's real interest, recomputed
-      // fresh off its actual balance — not a stale number that drifts as it's paid down.
-      const floor = l.schedule
-        ? month <= l.schedule.length
-          ? l.schedule[month - 1]
-          : l.balance
-        : l.protectFromGrowth
-        ? Math.max(l.minPayment || 0, interestThisMonth[l.id] || 0)
-        : l.minPayment || 0;
-      const pay = Math.min(floor, l.balance, budgetLeft);
-      l.balance -= pay;
-      budgetLeft -= pay;
-      plan[l.id] = (plan[l.id] || 0) + pay;
-    });
-
-    const extraTargets = active.filter((l) => !l.schedule);
-    const ordered =
-      strategyType === "avalanche"
-        ? [...extraTargets].sort((a, b) => b.rate - a.rate)
-        : [...extraTargets].sort((a, b) => a.balance - b.balance);
-
-    for (const l of ordered) {
-      if (budgetLeft <= 0.01) break;
-      if (l.balance <= 0.5) continue;
-      const extra = Math.min(budgetLeft, l.balance);
-      l.balance -= extra;
-      budgetLeft -= extra;
-      plan[l.id] = (plan[l.id] || 0) + extra;
-    }
-
-    state.forEach((l) => {
-      if (l.balance <= 0.5 && payoffMonth[l.id] == null) payoffMonth[l.id] = month;
-    });
-
-    if (month === 1) firstMonthPlan = plan;
-  }
-
-  return {
-    feasible: true,
-    months: month,
-    totalInterest,
-    payoffMonth,
-    firstMonthPlan: firstMonthPlan || {},
-  };
-}
-
-// What happens if each loan just keeps being paid independently at its
-// current pace, with no reallocation between loans.
-function simulateStatusQuo(loans, maxMonths = 600) {
-  let totalInterest = 0;
-  let months = 0;
-  const payoffMonth = {};
-  const stalled = [];
-
-  loans.forEach((l) => {
-    const monthlyRate = l.rate / 12;
-    const payment = l.currentPayment || 0;
-    if (l.balance <= 0.5) {
-      payoffMonth[l.id] = 0;
-      return;
-    }
-    if (l.schedule) {
-      // A repayment plan is paid as scheduled; anything still owed when it
-      // runs out is paid off the month after.
-      let bal = l.balance;
-      let m = 0;
-      while (bal > 0.5 && m < maxMonths) {
-        const pay = m < l.schedule.length ? l.schedule[m] : bal;
-        m++;
-        bal -= Math.min(pay, bal);
-      }
-      payoffMonth[l.id] = m;
-      months = Math.max(months, m);
-      return;
-    }
-    if (payment <= l.balance * monthlyRate) {
-      stalled.push(l.id);
-      return;
-    }
-    let bal = l.balance;
-    let m = 0;
-    while (bal > 0.5 && m < maxMonths) {
-      m++;
-      // Month 1 is the current month, whose interest is already in the balance.
-      const interest = m === 1 ? 0 : bal * monthlyRate;
-      bal += interest;
-      totalInterest += interest;
-      bal -= Math.min(payment, bal);
-    }
-    payoffMonth[l.id] = m;
-    months = Math.max(months, m);
-  });
-
-  return { totalInterest, months, payoffMonth, stalled };
-}
-
-// ---- Debt budget made of parts ----
-// strategy.budgetParts (optional) says what the monthly debt budget is made of:
-//   { id, kind: "set", label, amount }       a fixed amount (salary, a person's share…)
-//   { id, kind: "income", incomeId, share }  a share (0–1) of an income source's usual profit
-// The budget is their sum, worked out fresh each time, so an income share follows
-// that source's profit (and its yearly rises). With no parts saved, the old single
-// strategy.budget is the whole budget, exactly as before. strategy.budget is still
-// saved alongside the parts as a snapshot of the total.
-
-const GOAL_EXTRA_LABEL = "Extra for debt-free goal";
-
-// The parts to show and edit: the saved ones, or the old single budget as one set amount.
-function budgetPartsOf(strategy) {
-  if (Array.isArray(strategy.budgetParts)) return strategy.budgetParts;
-  const b = Number(strategy.budget) || 0;
-  return b > 0 ? [{ id: "set-base", kind: "set", label: "Set amount", amount: b }] : [];
-}
-
-// What one part adds to this month's budget. An income share uses the source's usual
-// profit now; a source that hasn't started, makes a loss or no longer exists adds nothing.
-function budgetPartAmount(part, incomesById, asOfKey) {
-  if (part.kind === "income") {
-    const src = incomesById[part.incomeId];
-    if (!src || (src.startMonth || asOfKey) > asOfKey) return 0;
-    const profit = expectedIncomeFor(src, asOfKey) - (Number(src.usualExpenses) || 0);
-    return Math.max(Math.round(profit * (Number(part.share) || 0)), 0);
-  }
-  return Number(part.amount) || 0;
-}
-
-function budgetTotal(parts, incomesById, asOfKey) {
-  return parts.reduce((s, p) => s + budgetPartAmount(p, incomesById, asOfKey), 0);
-}
-
-// "all of its profit", "half of its profit", "30% of its profit".
-function shareLabel(share) {
-  if (share >= 1) return "all of its profit";
-  if (share === 0.5) return "half of its profit";
-  return `${Math.round(share * 1000) / 10}% of its profit`;
-}
-
-// The smallest monthly budget (rounded up to the next ₹100) that clears every
-// loan within `targetMonths` under the given strategy. Only runs
-// simulateStrategy — it doesn't change it. If even paying everything off at
-// once can't get there (a repayment plan runs on its own schedule), returns
-// { possible: false, soonest } with the soonest achievable month count.
-// `budgetRise(m)` (optional) is how much more than this month's budget month m
-// will have — from income shares that grow over time. The answer is then the
-// budget needed *now*, with those rises still to come on top.
-function budgetForTarget(loans, strategyType, targetMonths, budgetRise = null) {
-  const withRise = (budget) => (budgetRise ? (m) => budget + budgetRise(m) : budget);
-  const meetsTarget = (budget) => {
-    const r = simulateStrategy(loans, strategyType, withRise(budget));
-    return r.feasible && r.months <= targetMonths;
-  };
-  // Enough to clear every ordinary loan in month 1 (balance plus that month's
-  // interest) while a repayment plan is paid its full remaining balance.
-  const everything = Math.ceil(
-    loans.reduce((s, l) => s + (l.schedule ? l.balance : l.balance * (1 + l.rate / 12)), 0) + 1
-  );
-  if (!meetsTarget(everything)) {
-    return { possible: false, soonest: simulateStrategy(loans, strategyType, withRise(everything)).months };
-  }
-  // With rising income shares, the rises alone might already be enough.
-  if (meetsTarget(0)) return { possible: true, budget: 0 };
-  let lo = 0;
-  let hi = everything;
-  while (hi - lo > 1) {
-    const mid = Math.floor((lo + hi) / 2);
-    if (meetsTarget(mid)) hi = mid;
-    else lo = mid;
-  }
-  const rounded = Math.ceil(hi / 100) * 100;
-  return { possible: true, budget: meetsTarget(rounded) ? rounded : hi };
-}
-
-const styles = `
-  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&display=swap');
-
-  html, body {
-    margin: 0;
-    padding: 0;
-    background: #3A2717;
-  }
-
-  .fl-shell {
-    --ink: #1B2A4A;
-    --paper: #EDE4CE;
-    --paper-card: #FBF8F0;
-    --leather: #4C3423;
-    --leather-hi: #5E4430;
-    --leather-dk: #3A2717;
-    --ribbon-hi: #9C8A78;
-    --ribbon: #8B7560;
-    --ribbon-dk: #6B5744;
-    --brass: #B08A3E;
-    --brass-light: #E4C583;
-    --maroon: #7A2E2E;
-    --forest: #2F5D45;
-    --muted: #6B6455;
-    --line: #C9BFA3;
-    max-width: 480px;
-    width: 100%;
-    position: fixed;
-    top: 0;
-    bottom: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--paper);
-    color: var(--ink);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  /* iOS 26+ Home Screen bug: in standalone mode the viewport comes up short
-     by the status-bar height, so top:0/bottom:0, 100% and 100dvh all stop
-     early, and a position:fixed shell is only drawn down to that false edge
-     even when sized taller. 100lvh is the one unit that measures the full
-     screen, and the shell must be in normal flow so the document itself is
-     that tall and iOS draws all the way down. Page-level bounce is turned
-     off so dragging the header or tab bar doesn't rubber-band the app. */
-  @media (display-mode: standalone) {
-    html, body { overscroll-behavior: none; }
-    .fl-shell { position: relative; bottom: auto; height: 100lvh; }
-    .fl-bottomnav { position: absolute; }
-  }
-  html.fl-standalone, html.fl-standalone body { overscroll-behavior: none; }
-  html.fl-standalone .fl-shell { position: relative; bottom: auto; height: 100lvh; }
-  html.fl-standalone .fl-bottomnav { position: absolute; }
-  .fl-shell * { box-sizing: border-box; }
-  .fl-serif { font-family: 'Fraunces', Georgia, "Times New Roman", serif; }
-  .fl-mono { font-family: ui-monospace, Menlo, Consolas, "Courier New", monospace; }
-
-  .fl-grain { position: absolute; inset: 0; pointer-events: none; }
-  .fl-grain-paper { filter: url(#grainPaper); opacity: 0.5; mix-blend-mode: multiply; z-index: 0; }
-  .fl-grain-leather { filter: url(#grainLeather); opacity: 0.6; mix-blend-mode: overlay; z-index: 0; }
-  .fl-z1 { position: relative; z-index: 1; }
-
-  .fl-leather {
-    background:
-      radial-gradient(ellipse 130% 110% at 20% -10%, rgba(255,214,168,0.16), transparent 55%),
-      radial-gradient(ellipse 120% 100% at 90% 115%, rgba(0,0,0,0.22), transparent 60%),
-      radial-gradient(ellipse 140% 140% at 50% 50%, transparent 55%, rgba(0,0,0,0.14) 100%),
-      linear-gradient(155deg, var(--leather-hi) 0%, var(--leather) 48%, var(--leather-dk) 100%);
-    color: #F3E7D0;
-    position: relative;
-  }
-  .fl-stitch-bottom {
-    border-bottom: 1.5px dashed rgba(228,197,131,0.55);
-    box-shadow: 0 1px 0 rgba(0,0,0,0.4), 0 2px 4px rgba(0,0,0,0.25);
-  }
-  .fl-stitch-top {
-    border-top: 1.5px dashed rgba(228,197,131,0.55);
-    box-shadow: 0 -1px 0 rgba(0,0,0,0.4), 0 -2px 4px rgba(0,0,0,0.25);
-  }
-  .fl-rivet {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: radial-gradient(circle at 35% 30%, var(--brass-light), var(--brass) 60%, #7A5A22 100%);
-    box-shadow: 0 1px 1px rgba(0,0,0,0.5);
-  }
-
-  .fl-topbar {
-    padding: calc(20px + env(safe-area-inset-top, 0px)) 20px 14px;
-    position: relative;
-    z-index: 1;
-  }
-  .fl-topbar-rivets {
-    position: absolute;
-    top: calc(18px + env(safe-area-inset-top, 0px));
-    right: 20px;
-    display: flex;
-    gap: 6px;
-  }
-  /* Brass "+" (add a debt) in the header's top-right corner. */
-  .fl-topbar-add {
-    position: absolute;
-    top: calc(16px + env(safe-area-inset-top, 0px));
-    right: 16px;
-    z-index: 2;
-    width: 36px;
-    height: 36px;
-    padding: 0;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #3A2717;
-    background: radial-gradient(circle at 35% 30%, var(--brass-light), var(--brass) 60%, #7A5A22 100%);
-    border: 1px solid rgba(0,0,0,0.35);
-    box-shadow: 0 1px 2px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.35);
-    cursor: pointer;
-  }
-  .fl-topbar-add:active { transform: translateY(1px); }
-  .fl-topbar-has-action { padding-right: 48px; }
-
-  /* Full-screen page that slides up over the app (used for adding a debt). */
-  .fl-sheet {
-    position: absolute;
-    inset: 0;
-    z-index: 5;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    background: var(--paper);
-    animation: fl-sheet-up 0.22s ease-out;
-  }
-  @keyframes fl-sheet-up {
-    from { transform: translateY(24px); opacity: 0; }
-    to { transform: none; opacity: 1; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .fl-sheet { animation: none; }
-  }
-  .fl-sheet-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: calc(16px + env(safe-area-inset-top, 0px)) 16px 14px 20px;
-    z-index: 1;
-  }
-  .fl-sheet-close {
-    flex-shrink: 0;
-    width: 36px;
-    height: 36px;
-    padding: 0;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #F3E7D0;
-    background: rgba(0,0,0,0.2);
-    border: 1px solid rgba(228,197,131,0.45);
-    cursor: pointer;
-  }
-  .fl-sheet-body {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    padding: 16px 16px calc(24px + env(safe-area-inset-bottom, 0px));
-    position: relative;
-    z-index: 1;
-  }
-  .fl-title {
-    font-size: 22px;
-    font-weight: 700;
-    letter-spacing: 0.2px;
-    margin: 0;
-  }
-  .fl-subtitle {
-    margin: 4px 0 0;
-    font-size: 13px;
-    opacity: 0.75;
-  }
-  .fl-back-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    cursor: pointer;
-    color: inherit;
-    font-size: 14px;
-    margin-bottom: 8px;
-    background: none;
-    border: none;
-    padding: 4px 0;
-    opacity: 0.85;
-  }
-
-  .fl-content {
-    flex: 1;
-    min-height: 0;
-    padding: 16px 16px calc(74px + env(safe-area-inset-bottom, 0px));
-    overflow-y: auto;
-    position: relative;
-    z-index: 1;
-  }
-
-  .fl-bottomnav {
-    position: fixed;
-    bottom: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 100%;
-    max-width: 480px;
-    z-index: 1;
-  }
-  .fl-navbtn {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 2px;
-    padding: 16px 0 6px;
-    background: none;
-    border: none;
-    color: rgba(243,231,208,0.55);
-    font-size: 10.5px;
-    font-weight: 600;
-    position: relative;
-  }
-  .fl-navbtn.active { color: #F3E7D0; }
-  .fl-ribbon {
-    display: none;
-    position: absolute; top: -14px; left: 50%; transform: translateX(-50%);
-    width: 22px; height: 26px;
-    background: linear-gradient(180deg, var(--ribbon-hi) 0%, var(--ribbon) 55%, var(--ribbon-dk) 100%);
-    box-shadow:
-      inset 2px 0 1px -1px rgba(255,255,255,0.22),
-      inset -2px 0 1px -1px rgba(0,0,0,0.28);
-    clip-path: polygon(0 0, 100% 0, 100% 78%, 50% 100%, 0 78%);
-    filter: drop-shadow(0 2px 3px rgba(0,0,0,0.4));
-  }
-  .fl-navbtn.active .fl-ribbon { display: block; }
-  .fl-ribbon-grain {
-    position: absolute; inset: 0;
-    clip-path: polygon(0 0, 100% 0, 100% 78%, 50% 100%, 0 78%);
-    filter: url(#grainRibbon);
-    opacity: 0.5;
-    mix-blend-mode: overlay;
-    pointer-events: none;
-  }
-
-  .fl-summary {
-    background: var(--paper-card);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 4px 10px rgba(74,44,29,0.10);
-    padding: 16px;
-    margin-bottom: 16px;
-  }
-  .fl-summary-label {
-    font-size: 12px;
-    color: var(--muted);
-    margin: 0 0 2px;
-  }
-  .fl-summary-value {
-    font-size: 28px;
-    font-weight: 700;
-    margin: 0;
-  }
-  .fl-progress-track {
-    height: 6px;
-    background: rgba(107,100,85,0.15);
-    border-radius: 6px;
-    margin-top: 10px;
-    overflow: hidden;
-  }
-  .fl-progress-fill {
-    height: 100%;
-    border-radius: 6px;
-    background: linear-gradient(90deg, var(--brass), var(--brass-light));
-  }
-
-  .fl-card {
-    background: var(--paper-card);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 4px 10px rgba(74,44,29,0.10);
-    padding: 14px 16px;
-    margin-bottom: 10px;
-    cursor: pointer;
-  }
-  .fl-card-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-  }
-  .fl-card-name {
-    font-weight: 600;
-    font-size: 15px;
-  }
-  .fl-card-balance {
-    font-weight: 700;
-    font-size: 16px;
-  }
-  .fl-card-sub {
-    font-size: 12px;
-    color: var(--muted);
-    margin-top: 2px;
-  }
-  .fl-overdue {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    padding: 2px 8px;
-    border-radius: 20px;
-    background: rgba(122,46,46,0.10);
-    color: var(--maroon);
-    border: 1px solid rgba(122,46,46,0.28);
-    margin-top: 4px;
-  }
-
-  .fl-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    padding: 2px 8px;
-    border-radius: 20px;
-    border: 1px solid transparent;
-  }
-  .fl-chip.chip-grey {
-    background: rgba(107,100,85,0.14);
-    color: var(--muted);
-    border-color: rgba(107,100,85,0.3);
-  }
-  .fl-chip.chip-green {
-    background: rgba(47,93,69,0.12);
-    color: var(--forest);
-    border-color: rgba(47,93,69,0.28);
-  }
-  .fl-chip.chip-blue {
-    background: rgba(27,42,74,0.10);
-    color: var(--ink);
-    border-color: rgba(27,42,74,0.24);
-  }
-  /* Loan-type tag (Mortgage, Car, ...): brass, so it never reads as a status colour. */
-  .fl-chip.chip-tag {
-    background: rgba(176,138,62,0.14);
-    color: #7A5A22;
-    border-color: rgba(176,138,62,0.42);
-  }
-  .fl-chip-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 8px;
-  }
-
-  .fl-tag-picker {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .fl-tag-option {
-    padding: 6px 12px;
-    border-radius: 20px;
-    border: 1px solid var(--line);
-    background: none;
-    color: var(--ink);
-    font-family: inherit;
-    font-size: 13px;
-    cursor: pointer;
-  }
-  .fl-tag-option.selected {
-    background: linear-gradient(160deg, var(--leather-hi), var(--leather));
-    border-color: var(--leather-dk);
-    color: #F3E7D0;
-  }
-
-  .fl-switch-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 4px;
-  }
-  .fl-switch-label { font-size: 14px; color: var(--ink); }
-  .fl-switch {
-    position: relative;
-    flex-shrink: 0;
-    width: 46px;
-    height: 28px;
-    padding: 0;
-    border-radius: 14px;
-    border: 1px solid var(--line);
-    background: rgba(107,100,85,0.18);
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-  .fl-switch.on {
-    background: linear-gradient(160deg, var(--leather-hi), var(--leather));
-    border-color: var(--leather-dk);
-  }
-  .fl-switch-knob {
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    background: radial-gradient(circle at 35% 30%, #fff, #E9E1CC);
-    box-shadow: 0 1px 2px rgba(0,0,0,0.35);
-    transition: transform 0.15s;
-  }
-  .fl-switch.on .fl-switch-knob {
-    transform: translateX(18px);
-    background: radial-gradient(circle at 35% 30%, var(--brass-light), var(--brass) 60%, #7A5A22 100%);
-  }
-
-  .fl-section-title {
-    font-size: 13px;
-    color: var(--muted);
-    margin: 18px 0 8px;
-    padding-bottom: 4px;
-    border-bottom: 1px dashed var(--line);
-  }
-
-  .fl-list-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    background: var(--paper-card);
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 3px 8px rgba(74,44,29,0.08);
-    padding: 12px 14px;
-    margin-bottom: 8px;
-  }
-  .fl-list-row-main { flex: 1; min-width: 0; }
-  .fl-list-row-name { font-weight: 600; font-size: 14px; }
-  .fl-list-row-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
-  .fl-icon-btn {
-    background: none;
-    border: none;
-    padding: 6px;
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .fl-icon-btn.danger { color: var(--maroon); }
-
-  .fl-add-row {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    border: 1px dashed var(--line);
-    border-radius: 12px;
-    padding: 12px;
-    color: var(--ink);
-    background: none;
-    width: 100%;
-    font-size: 14px;
-    margin-top: 4px;
-  }
-
-  .fl-panel {
-    background: var(--paper-card);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 4px 10px rgba(74,44,29,0.10);
-    padding: 16px;
-    margin-bottom: 14px;
-  }
-  .fl-panel-title {
-    font-weight: 700;
-    font-size: 15px;
-    margin: 0 0 12px;
-  }
-  .fl-field { margin-bottom: 12px; }
-  .fl-field label {
-    display: block;
-    font-size: 12px;
-    color: var(--muted);
-    margin-bottom: 4px;
-  }
-  .fl-field input {
-    width: 100%;
-    padding: 9px 10px;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    font-size: 14px;
-    background: #fff;
-    color: var(--ink);
-    font-family: inherit;
-  }
-  .fl-field input:focus {
-    outline: 2px solid var(--brass);
-    outline-offset: 1px;
-  }
-  .fl-term-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .fl-term-row input { flex: 1; min-width: 0; }
-  .fl-term-row .fl-tag-option { flex-shrink: 0; }
-
-  .fl-plan-preview {
-    margin-top: 8px;
-    padding: 8px 10px;
-    border: 1px dashed rgba(176,138,62,0.45);
-    border-radius: 8px;
-    background: rgba(176,138,62,0.08);
-    font-size: 12px;
-    line-height: 1.5;
-    color: var(--ink);
-  }
-  .fl-plan-details { margin-top: 10px; font-size: 13px; }
-  .fl-plan-details summary {
-    cursor: pointer;
-    color: var(--ink);
-    font-size: 13px;
-    padding: 4px 0;
-  }
-  .fl-plan-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 4px 0;
-    border-bottom: 1px dashed var(--line);
-  }
-  .fl-plan-row input { width: 130px; flex: none; padding: 6px 8px; }
-
-  /* Monthly debt budget: its parts in the editor, and the breakdown on the Strategy card. */
-  .fl-budget-part {
-    padding: 10px 0;
-    border-bottom: 1px dashed var(--line);
-  }
-  .fl-budget-part input {
-    width: 100%;
-    padding: 9px 10px;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    font-size: 14px;
-    background: #fff;
-    color: var(--ink);
-    font-family: inherit;
-  }
-  .fl-budget-part .fl-term-row input { flex: 1; min-width: 0; width: auto; }
-  .fl-budget-part-end { display: inline-flex; align-items: center; gap: 2px; }
-  .fl-budget-total {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    padding-top: 12px;
-    font-weight: 700;
-    font-size: 15px;
-  }
-  .fl-budget-breakdown {
-    margin-top: 10px;
-    padding-top: 8px;
-    border-top: 1px dashed var(--line);
-  }
-  .fl-budget-line {
-    display: flex;
-    justify-content: space-between;
-    gap: 10px;
-    font-size: 12px;
-    color: var(--muted);
-    padding: 2px 0;
-  }
-  .fl-budget-line .fl-mono { color: var(--ink); flex-shrink: 0; }
-  .fl-form-actions {
-    display: flex;
-    gap: 8px;
-    margin-top: 4px;
-  }
-
-  .fl-btn {
-    flex: 1;
-    padding: 10px;
-    border-radius: 10px;
-    border: 1px solid var(--leather-dk);
-    background: linear-gradient(160deg, var(--leather-hi), var(--leather));
-    color: #F3E7D0;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .fl-btn.secondary {
-    background: none;
-    color: var(--ink);
-    border-color: var(--line);
-  }
-  .fl-btn.danger {
-    background: var(--maroon);
-    border-color: var(--maroon);
-  }
-
-  .fl-empty {
-    text-align: center;
-    color: var(--muted);
-    padding: 40px 20px;
-    font-size: 14px;
-  }
-
-  .fl-detail-head {
-    background: var(--paper-card);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 4px 10px rgba(74,44,29,0.10);
-    padding: 16px;
-    margin-bottom: 16px;
-  }
-  .fl-detail-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    margin-top: 10px;
-  }
-  .fl-stat-label { font-size: 11px; color: var(--muted); margin: 0; }
-  .fl-stat-edit {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 0;
-    background: none;
-    border: none;
-    color: var(--muted);
-    font-family: inherit;
-    cursor: pointer;
-  }
-  .fl-stat-value { font-size: 17px; font-weight: 700; margin: 2px 0 0; }
-
-  .fl-month-row {
-    border-bottom: 1px dashed var(--line);
-    padding: 10px 2px;
-  }
-  .fl-month-row:last-child { border-bottom: none; }
-  .fl-month-top {
-    display: flex;
-    justify-content: space-between;
-    font-size: 13px;
-    cursor: pointer;
-  }
-  .fl-month-name { font-weight: 600; }
-  .fl-month-balance { font-weight: 700; }
-  .fl-month-breakdown {
-    font-size: 12px;
-    color: var(--muted);
-    margin-top: 3px;
-    cursor: pointer;
-  }
-
-  .fl-toast {
-    position: fixed;
-    bottom: calc(74px + env(safe-area-inset-bottom, 0px));
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--leather-dk);
-    color: #F3E7D0;
-    font-size: 12px;
-    padding: 6px 14px;
-    border-radius: 20px;
-    opacity: 0.95;
-    z-index: 2;
-  }
-
-  .fl-confirm-row {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-  }
-`;
 
 function ConfirmButton({ onConfirm, label }) {
   const [confirming, setConfirming] = useState(false);
@@ -1852,7 +581,7 @@ function MonthEntryForm({ people, monthKey, onMonthKeyChange, defaults, isExisti
 
       {people.length === 0 && (
         <p className="fl-card-sub" style={{ marginBottom: 10 }}>
-          No contributors yet — add people from the People tab first.
+          No names yet — add them in the Account tab first.
         </p>
       )}
       {people.map((p) => (
@@ -2425,7 +1154,322 @@ function IncomeMonthForm({ monthKey, onMonthKeyChange, defaults, isExisting, onS
   );
 }
 
-export default function FamilyLedger() {
+// "shared · 2" on your items that others can see; "from riyas" on items
+// someone has shared with you.
+function SharedChip({ a }) {
+  if (!a.owner) return <span className="fl-chip chip-shared">from {(a.ownerEmail || "").split("@")[0]}</span>;
+  if (a.shares.length) return <span className="fl-chip chip-shared">shared · {a.shares.length}</span>;
+  return null;
+}
+
+// Sharing controls for one debt or income source: the owner adds or removes
+// people (can edit / view only); someone it's shared with can leave.
+function SharePanel({ itemName, a, myEmail, onShare, onUnshare, kindLabel }) {
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("editor");
+  const [justShared, setJustShared] = useState(null);
+  const appUrl = typeof window !== "undefined" ? window.location.origin : "";
+
+  function inviteText(to) {
+    return `I've shared “${itemName}” with you on Ledger. Open ${appUrl} and sign in with ${to} to see it.`;
+  }
+
+  async function sendInvite(to) {
+    const text = inviteText(to);
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: "Ledger", text });
+        return;
+      }
+    } catch (e) {
+      if (e && e.name === "AbortError") return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setJustShared({ email: to, copied: true });
+    } catch (e) {
+      window.location.href = `mailto:${to}?subject=${encodeURIComponent("Ledger")}&body=${encodeURIComponent(text)}`;
+    }
+  }
+
+  if (!a.owner) {
+    return (
+      <div className="fl-panel">
+        <p className="fl-panel-title fl-serif">Shared with you</p>
+        <p className="fl-card-sub" style={{ marginBottom: 10 }}>
+          {a.ownerEmail} shared this {kindLabel} with you — you can {a.canEdit ? "record and edit" : "only view"} it.
+        </p>
+        <div className="fl-form-actions">
+          <ConfirmTextButton label="Leave" confirmLabel="Yes, leave" onConfirm={() => onUnshare(myEmail, true)} />
+        </div>
+      </div>
+    );
+  }
+
+  const valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  return (
+    <div className="fl-panel">
+      <p className="fl-panel-title fl-serif">Sharing</p>
+      {a.shares.length === 0 && (
+        <p className="fl-card-sub" style={{ marginBottom: 10 }}>
+          Only you can see this {kindLabel}. Share it with someone to manage it together.
+        </p>
+      )}
+      {a.shares.map((sh) => (
+        <div className="fl-share-row" key={sh.email}>
+          <span className="fl-share-email">
+            {sh.email}
+            <span className="fl-card-sub"> · {sh.role === "viewer" ? "view only" : "can edit"}</span>
+          </span>
+          <button className="fl-icon-btn" onClick={() => sendInvite(sh.email)} aria-label={"Send invite to " + sh.email}>
+            <Mail size={16} />
+          </button>
+          <ConfirmButton label={"stop sharing with " + sh.email} onConfirm={() => onUnshare(sh.email, false)} />
+        </div>
+      ))}
+      <div className="fl-field" style={{ marginTop: 10 }}>
+        <label>Share with (their email)</label>
+        <input
+          type="email"
+          inputMode="email"
+          autoCapitalize="none"
+          autoCorrect="off"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="name@example.com"
+        />
+      </div>
+      <div className="fl-tag-picker" style={{ marginBottom: 10 }}>
+        {[
+          ["editor", "Can edit"],
+          ["viewer", "View only"],
+        ].map(([r, label]) => (
+          <button
+            key={r}
+            type="button"
+            className={"fl-tag-option" + (role === r ? " selected" : "")}
+            aria-pressed={role === r}
+            onClick={() => setRole(r)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="fl-form-actions">
+        <button
+          className="fl-btn"
+          disabled={!valid}
+          onClick={async () => {
+            const to = email.trim().toLowerCase();
+            if (await onShare(to, role)) {
+              setEmail("");
+              setJustShared({ email: to, copied: false });
+            }
+          }}
+        >
+          <Share2 size={14} /> Share
+        </button>
+      </div>
+      {justShared && (
+        <p className="fl-card-sub" style={{ marginTop: 10 }}>
+          {justShared.copied
+            ? "Invite copied — paste it into WhatsApp or a message."
+            : `Shared with ${justShared.email}. They’ll see it when they sign in with that email.`}{" "}
+          {!justShared.copied && (
+            <button className="fl-link" onClick={() => sendInvite(justShared.email)}>
+              Send them an invite
+            </button>
+          )}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// A button that asks "are you sure?" before doing something you can't undo
+// from the toast (like leaving a shared item).
+function ConfirmTextButton({ label, confirmLabel, onConfirm }) {
+  const [asking, setAsking] = useState(false);
+  if (!asking) {
+    return (
+      <button className="fl-btn secondary" onClick={() => setAsking(true)}>
+        {label}
+      </button>
+    );
+  }
+  return (
+    <>
+      <button className="fl-btn secondary" onClick={() => setAsking(false)}>
+        Cancel
+      </button>
+      <button className="fl-btn danger" onClick={onConfirm}>
+        {confirmLabel}
+      </button>
+    </>
+  );
+}
+
+// Sign in with a 6-digit code sent by email — no password, and it works inside
+// the Home Screen app (a sign-in link would open Safari instead).
+function SignIn() {
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [stage, setStage] = useState("email");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function sendCode() {
+    const addr = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return setError("Enter your email address.");
+    setBusy(true);
+    setError("");
+    const { error: err } = await supabase.auth.signInWithOtp({ email: addr, options: { shouldCreateUser: true } });
+    setBusy(false);
+    if (err) {
+      console.error("send code failed", err);
+      setError(
+        /rate|seconds|many/i.test(err.message || "")
+          ? "Too many codes asked for just now — wait a minute and try again."
+          : "Couldn’t send the code — check the email and your connection."
+      );
+      return;
+    }
+    setEmail(addr);
+    setStage("code");
+  }
+
+  async function verify() {
+    const token = code.replace(/\D/g, "");
+    if (token.length < 6) return setError("Enter the code from the email.");
+    setBusy(true);
+    setError("");
+    const { error: err } = await supabase.auth.verifyOtp({ email, token, type: "email" });
+    setBusy(false);
+    if (err) {
+      console.error("verify failed", err);
+      setError("That code didn’t work — check it, or send a new one.");
+    }
+  }
+
+  return (
+    <div className="fl-shell">
+      <style>{styles}</style>
+      <div className="fl-topbar fl-leather fl-stitch-bottom">
+        <div className="fl-grain fl-grain-leather"></div>
+        <div className="fl-topbar-rivets">
+          <div className="fl-rivet"></div>
+          <div className="fl-rivet"></div>
+        </div>
+        <div className="fl-z1">
+          <h1 className="fl-title fl-serif">Ledger</h1>
+          <p className="fl-subtitle">Your debts and income, shared only with who you choose</p>
+        </div>
+      </div>
+      <div className="fl-content">
+        <div className="fl-panel" style={{ marginTop: 8 }}>
+          {stage === "email" ? (
+            <>
+              <p className="fl-panel-title fl-serif">Sign in</p>
+              <div className="fl-field">
+                <label>Your email</label>
+                <input
+                  type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && sendCode()}
+                  placeholder="name@example.com"
+                />
+              </div>
+              <p className="fl-card-sub" style={{ marginBottom: 12 }}>
+                We’ll email you a code to sign in. No password needed. New here? The same code creates your account.
+              </p>
+              <div className="fl-form-actions">
+                <button className="fl-btn" onClick={sendCode} disabled={busy}>
+                  {busy ? "Sending…" : "Email me a code"}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="fl-panel-title fl-serif">Enter your code</p>
+              <p className="fl-card-sub" style={{ marginBottom: 10 }}>
+                We sent a code to {email}. It can take a minute — check spam too.
+              </p>
+              <div className="fl-field">
+                <label>Code</label>
+                <input
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && verify()}
+                  placeholder="123456"
+                  className="fl-code-input"
+                />
+              </div>
+              <div className="fl-form-actions">
+                <button
+                  className="fl-btn secondary"
+                  onClick={() => {
+                    setStage("email");
+                    setCode("");
+                    setError("");
+                  }}
+                  disabled={busy}
+                >
+                  Different email
+                </button>
+                <button className="fl-btn" onClick={verify} disabled={busy}>
+                  {busy ? "Checking…" : "Sign in"}
+                </button>
+              </div>
+              <button className="fl-link" style={{ marginTop: 12 }} onClick={sendCode} disabled={busy}>
+                Send a new code
+              </button>
+            </>
+          )}
+          {error && (
+            <p className="fl-overdue" style={{ marginTop: 12 }}>
+              <AlertCircle size={12} /> {error}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Signed-in person → their ledger; otherwise the sign-in screen.
+export default function App() {
+  const [session, setSession] = useState(undefined);
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    return () => sub.subscription.unsubscribe();
+  }, []);
+  if (session === undefined) {
+    return (
+      <div className="fl-shell">
+        <style>{styles}</style>
+        <div className="fl-empty">Loading…</div>
+      </div>
+    );
+  }
+  if (!session) return <SignIn />;
+  return <Ledger key={session.user.id} user={session.user} />;
+}
+
+function Ledger({ user }) {
+  const myEmail = (user.email || "").toLowerCase();
+  // A starting name for recording payments: the first part of the email.
+  const myName = (() => {
+    const local = myEmail.split("@")[0].replace(/[._-]+/g, " ").trim() || "Me";
+    return local.charAt(0).toUpperCase() + local.slice(1);
+  })();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [connectionError, setConnectionError] = useState(false);
@@ -2441,80 +1485,104 @@ export default function FamilyLedger() {
   const [newPerson, setNewPerson] = useState("");
   const [showBudgetEditor, setShowBudgetEditor] = useState(false);
   const [editingGoal, setEditingGoal] = useState(false);
-  const [toast, setToast] = useState("");
+  const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
-  const lastWrittenJson = useRef(null);
+  // Row versions and sharing per item (see store.js), outside React state so a
+  // save can update them as it goes.
+  const metaRef = useRef({ items: {}, entries: {}, settingsVersion: null });
+  // The latest data, for saving: a save (or an Undo tapped seconds later) must
+  // compare against what's on screen now, not the copy from when it was created.
+  const dataRef = useRef(null);
+  function showData(next) {
+    dataRef.current = next;
+    setData(next);
+  }
+  const deletedIdsRef = useRef(new Set());
+  const saveQueue = useRef(Promise.resolve());
+  const savingCount = useRef(0);
+  const reloadWanted = useRef(false);
+  const reloadTimer = useRef(null);
+  const [hasSettings, setHasSettings] = useState(true);
+  const [oldLedger, setOldLedger] = useState(null);
+  const [importResult, setImportResult] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [recordTarget, setRecordTarget] = useState(null);
+  const [activity, setActivity] = useState(null);
+  const [deletedItems, setDeletedItems] = useState(null);
+
+  async function reload() {
+    try {
+      const rows = await store.loadEverything();
+      const { data: next, meta, hasSettings: hs } = store.assemble(rows);
+      metaRef.current = meta;
+      showData(next);
+      setHasSettings(hs);
+      setConnectionError(false);
+    } catch (e) {
+      console.error("load failed", e);
+      setConnectionError(true);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    (async () => {
-      try {
-        const { data: row, error } = await supabase
-          .from("ledger")
-          .select("payload")
-          .eq("id", LEDGER_ROW_ID)
-          .maybeSingle();
-        if (error) throw error;
-
-        const rawLoaded = row && row.payload ? row.payload : defaultData();
-        const { data: migrated, changed } = migrateData(rawLoaded);
-
-        setData(migrated);
-        lastWrittenJson.current = JSON.stringify(migrated);
-
-        if (!row || !row.payload || changed) {
-          const { error: upsertError } = await supabase
-            .from("ledger")
-            .upsert({ id: LEDGER_ROW_ID, payload: migrated });
-          if (upsertError) throw upsertError;
-        }
-      } catch (e) {
-        console.error("load failed", e);
-        setConnectionError(true);
-        setData(defaultData());
-      } finally {
-        setLoading(false);
-      }
-    })();
-
-    const channel = supabase
-      .channel("ledger-changes")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "ledger", filter: `id=eq.${LEDGER_ROW_ID}` },
-        (payload) => {
-          const incoming = payload.new && payload.new.payload;
-          if (!incoming) return;
-          const incomingJson = JSON.stringify(incoming);
-          if (incomingJson === lastWrittenJson.current) return;
-          const { data: migrated } = migrateData(incoming);
-          lastWrittenJson.current = JSON.stringify(migrated);
-          setData(migrated);
-        }
-      )
-      .subscribe();
-
+    reload();
+    store.readOldLedger().then(setOldLedger, () => setOldLedger(null));
+    // Live updates from other people. Our own saves echo back too, so wait until
+    // they've finished before refreshing.
+    const unsubscribe = store.subscribe(() => {
+      clearTimeout(reloadTimer.current);
+      reloadTimer.current = setTimeout(() => {
+        if (savingCount.current > 0) reloadWanted.current = true;
+        else reload();
+      }, 700);
+    });
     return () => {
-      supabase.removeChannel(channel);
+      unsubscribe();
+      clearTimeout(reloadTimer.current);
     };
   }, []);
 
-  function showToast(msg) {
-    setToast(msg);
+  function showToast(msg, undo = null, ms = undo ? 6000 : 1600) {
+    setToast({ msg, undo });
     if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(""), 1400);
+    toastTimer.current = setTimeout(() => setToast(null), ms);
   }
 
-  async function persist(next) {
-    setData(next);
-    try {
-      lastWrittenJson.current = JSON.stringify(next);
-      const { error } = await supabase.from("ledger").upsert({ id: LEDGER_ROW_ID, payload: next });
-      if (error) throw error;
-      showToast("Saved");
-    } catch (e) {
-      console.error("save failed", e);
-      showToast("Couldn't save — try again");
-    }
+  // Shows the change straight away, then saves just the rows that changed (in
+  // order, one save at a time). Every save offers Undo, which saves the state
+  // from before. If someone else changed the same thing meanwhile, nothing is
+  // overwritten: the latest is loaded and the person is told.
+  function persist(next, { message = "Saved", undoable = true } = {}) {
+    const prev = dataRef.current;
+    showData(next);
+    savingCount.current++;
+    saveQueue.current = saveQueue.current.then(async () => {
+      try {
+        await store.saveChanges(prev, next, metaRef.current, user.id, deletedIdsRef.current);
+        showToast(
+          message,
+          undoable ? () => persist(store.undoOf(prev, next, dataRef.current), { message: "Undone", undoable: false }) : null
+        );
+      } catch (e) {
+        console.error("save failed", e);
+        showToast(
+          e instanceof store.ConflictError
+            ? "Someone else changed this at the same time — showing the latest now. Please check it and try again."
+            : "Couldn’t save — check your connection and try again.",
+          null,
+          6000
+        );
+        await reload();
+      } finally {
+        savingCount.current--;
+        if (savingCount.current === 0 && reloadWanted.current) {
+          reloadWanted.current = false;
+          reload();
+        }
+      }
+    });
   }
 
   if (loading) {
@@ -2531,9 +1599,21 @@ export default function FamilyLedger() {
       <div className="fl-shell">
         <style>{styles}</style>
         <div className="fl-empty">
-          Couldn’t connect to the shared database. Check that VITE_SUPABASE_URL and
-          VITE_SUPABASE_ANON_KEY are set correctly, and that the "ledger" table exists
-          (see README.md).
+          Couldn’t load your ledger — check your connection.
+          <div className="fl-form-actions" style={{ marginTop: 16 }}>
+            <button className="fl-btn secondary" onClick={() => supabase.auth.signOut()}>
+              Sign out
+            </button>
+            <button
+              className="fl-btn"
+              onClick={() => {
+                setLoading(true);
+                reload();
+              }}
+            >
+              Try again
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -2793,8 +1873,8 @@ export default function FamilyLedger() {
   }
 
   function addLoan(fields) {
-    const newLoan = { id: uid("loan"), ...fields };
-    persist({ ...data, lenders: [...lenders, newLoan] });
+    const newLoan = { id: store.newId(), position: Date.now(), ...fields };
+    persist({ ...data, lenders: [...lenders, newLoan] }, { message: "Debt added" });
     setShowAddLoan(false);
   }
 
@@ -2804,11 +1884,10 @@ export default function FamilyLedger() {
     setEditingLoanId(null);
   }
 
+  // Deleting keeps the monthly entries, so Undo or "Recently deleted" can bring
+  // the debt back complete.
   function deleteLoan(id) {
-    const nextLenders = lenders.filter((l) => l.id !== id);
-    const nextPayments = { ...payments };
-    delete nextPayments[id];
-    persist({ ...data, lenders: nextLenders, payments: nextPayments });
+    persist({ ...data, lenders: lenders.filter((l) => l.id !== id) }, { message: "Deleted" });
     if (selectedLoanId === id) {
       setSelectedLoanId(null);
       setView("loans");
@@ -2829,8 +1908,9 @@ export default function FamilyLedger() {
   function saveMonthEntry(loanId, monthKey, amounts) {
     const existing = payments[loanId] || {};
     const nextEntries = { ...existing, [monthKey]: { amounts } };
-    persist({ ...data, payments: { ...payments, [loanId]: nextEntries } });
+    persist({ ...data, payments: { ...payments, [loanId]: nextEntries } }, { message: "Payment saved" });
     setPendingMonthKey(null);
+    setRecordTarget(null);
   }
 
   function deleteMonthEntry(loanId, monthKey) {
@@ -2848,7 +1928,7 @@ export default function FamilyLedger() {
   const selectedLoan = lenders.find((l) => l.id === selectedLoanId) || null;
 
   function addIncome(fields) {
-    persist({ ...data, incomes: [...incomes, { id: uid("inc"), ...fields }] });
+    persist({ ...data, incomes: [...incomes, { id: store.newId(), position: Date.now(), ...fields }] }, { message: "Income source added" });
     setShowAddIncome(false);
   }
 
@@ -2858,14 +1938,12 @@ export default function FamilyLedger() {
   }
 
   function deleteIncome(id) {
-    const nextRecords = { ...incomeRecords };
-    delete nextRecords[id];
-    const next = { ...data, incomes: incomes.filter((s) => s.id !== id), incomeRecords: nextRecords };
+    const next = { ...data, incomes: incomes.filter((s) => s.id !== id) };
     if (Array.isArray(strategy.budgetParts)) {
       const parts = strategy.budgetParts.filter((p) => !(p.kind === "income" && p.incomeId === id));
       next.strategy = { ...strategy, budgetParts: parts, budget: budgetTotal(parts, incomesById, asOfKey) };
     }
-    persist(next);
+    persist(next, { message: "Deleted" });
     if (selectedIncomeId === id) {
       setSelectedIncomeId(null);
       setView("income");
@@ -2874,8 +1952,9 @@ export default function FamilyLedger() {
 
   function saveIncomeMonth(id, monthKey, figures) {
     const existing = incomeRecords[id] || {};
-    persist({ ...data, incomeRecords: { ...incomeRecords, [id]: { ...existing, [monthKey]: figures } } });
+    persist({ ...data, incomeRecords: { ...incomeRecords, [id]: { ...existing, [monthKey]: figures } } }, { message: "Figures saved" });
     setPendingIncomeMonth(null);
+    setRecordTarget(null);
   }
 
   function deleteIncomeMonth(id, monthKey) {
@@ -2890,8 +1969,242 @@ export default function FamilyLedger() {
     setView("incomeDetail");
   }
 
+  // ---- Ownership and sharing ----
+  // Owner: full control. Shared "editor": can record and edit, not delete.
+  // Shared "viewer": can only look.
+  function access(id) {
+    const m = metaRef.current.items[id];
+    if (!m) return { owner: true, canEdit: true, shares: [], ownerEmail: myEmail };
+    const owner = m.ownerId === user.id;
+    const mine = m.shares.find((x) => x.email === myEmail);
+    return { owner, canEdit: owner || (mine && mine.role === "editor"), shares: m.shares, ownerEmail: m.ownerEmail, myRole: mine && mine.role };
+  }
+
+  // Contributor names to show for a debt: yours, plus any used on it before
+  // (a shared debt can have payments recorded under other people's names).
+  function namesFor(loanId) {
+    const seen = new Set(people.length ? people : [myName]);
+    Object.values(payments[loanId] || {}).forEach((e) => Object.keys((e && e.amounts) || {}).forEach((n) => seen.add(n)));
+    return [...seen];
+  }
+
+  async function shareItem(itemId, email, role) {
+    try {
+      await store.addShare(itemId, email, role);
+      await reload();
+      showToast("Shared");
+      return true;
+    } catch (e) {
+      console.error("share failed", e);
+      showToast(e && e.code === "23505" ? "Already shared with that email" : "Couldn’t share — check the email and try again", null, 4000);
+      return false;
+    }
+  }
+
+  async function unshareItem(itemId, email, leaving) {
+    try {
+      await store.removeShare(itemId, email);
+      if (leaving) {
+        setSelectedLoanId(null);
+        setSelectedIncomeId(null);
+        setView("dashboard");
+      }
+      await reload();
+      showToast(leaving ? "You’ve left it" : "Stopped sharing");
+    } catch (e) {
+      console.error("unshare failed", e);
+      showToast("Couldn’t change sharing — try again", null, 4000);
+    }
+  }
+
+  // ---- First run: bring in the old family ledger, or start fresh ----
+  // Only one person should import it: once someone has, everyone else is told
+  // to ask them to share instead of making a duplicate copy.
+  const oldImportedBy = oldLedger && oldLedger.importedBy;
+  const canImport = !!oldLedger && (!oldImportedBy || oldImportedBy === myEmail);
+  function totalOwed(d) {
+    return d.lenders.reduce((sum, l) => sum + computeSchedule(l, (d.payments || {})[l.id] || {}, asOfKey).finalBalance, 0);
+  }
+
+  async function importFamilyLedger() {
+    if (!canImport || importing) return;
+    setImporting(true);
+    try {
+      const counts = await store.importOldLedger(oldLedger.ledger, metaRef.current, user.id);
+      await store.markOldLedgerImported(myEmail).catch((e) => console.error("mark imported failed", e));
+      setOldLedger({ ...oldLedger, importedBy: myEmail });
+      const rows = await store.loadEverything();
+      const { data: next, meta, hasSettings: hs } = store.assemble(rows);
+      metaRef.current = meta;
+      showData(next);
+      setHasSettings(hs);
+      const before = totalOwed(oldLedger.ledger);
+      const after = totalOwed(next);
+      setImportResult({ ...counts, before, after, matches: Math.abs(before - after) < 1 && next.lenders.length === counts.debts });
+    } catch (e) {
+      console.error("import failed", e);
+      showToast("Import didn’t finish — nothing in the old ledger was changed. Try again.", null, 6000);
+      await reload();
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function startFresh() {
+    try {
+      await store.saveSettings({ people: [myName], strategy: { budget: 0, type: "avalanche" } }, metaRef.current, user.id);
+      await reload();
+    } catch (e) {
+      console.error("start failed", e);
+      showToast("Couldn’t save — check your connection and try again.", null, 5000);
+    }
+  }
+
+  // ---- Account tools ----
+  async function loadAccountLists() {
+    try {
+      const [hist, gone] = await Promise.all([store.loadHistory(60), store.loadDeleted()]);
+      setActivity(hist);
+      setDeletedItems(gone);
+    } catch (e) {
+      console.error("account lists failed", e);
+      setActivity([]);
+      setDeletedItems([]);
+    }
+  }
+
+  async function restoreDeleted(item) {
+    try {
+      await store.restoreItem(item.id, item.version);
+      deletedIdsRef.current.delete(item.id);
+      await reload();
+      await loadAccountLists();
+      showToast("Restored");
+    } catch (e) {
+      console.error("restore failed", e);
+      showToast("Couldn’t restore — try again", null, 4000);
+    }
+  }
+
+  function saveFile(name, type, text) {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+
+  // A calendar file with each debt's due date: repeating monthly at the
+  // amount it asks for, or month by month for a repayment plan.
+  function downloadCalendar() {
+    const events = [];
+    for (const l of lenderSummaries) {
+      if (!l.dueDay || l.remaining <= 0.5) continue;
+      if (l.repaymentPlan) {
+        const start = l.termStart || l.startMonth;
+        l.repaymentPlan.amounts.forEach((amt, i) => {
+          const key = monthKeyAdd(start, i);
+          if (key < asOfKey || amt <= 0) return;
+          const [y, m] = key.split("-").map(Number);
+          const day = Math.min(l.dueDay, new Date(y, m, 0).getDate());
+          events.push({ uid: `${l.id}-${key}@ledger`, title: `${l.name}: ${fmt(amt)} due`, date: `${key}-${String(day).padStart(2, "0")}` });
+        });
+      } else {
+        const pay = payableThisMonth(l);
+        events.push({
+          uid: `${l.id}@ledger`,
+          title: pay && !pay.fromPlan ? `${l.name}: ${fmt(pay.amount)} due` : `${l.name}: payment due`,
+          day: l.dueDay,
+          fromKey: asOfKey,
+          description: "From your Ledger. If the amount changes, add the reminders again.",
+        });
+      }
+    }
+    if (events.length === 0) {
+      showToast("No due dates yet — set a due day on your debts first", null, 4000);
+      return;
+    }
+    saveFile("ledger-due-dates.ics", "text/calendar", buildCalendar(events));
+  }
+
+  async function downloadBackup() {
+    try {
+      const rows = await store.loadEverything();
+      const stamp = new Date().toISOString().slice(0, 10);
+      saveFile(`ledger-backup-${stamp}.json`, "application/json", JSON.stringify({ exportedAt: new Date().toISOString(), by: myEmail, ...rows }, null, 2));
+    } catch (e) {
+      console.error("backup failed", e);
+      showToast("Couldn’t make the backup — try again", null, 4000);
+    }
+  }
+
+  // ---- Record a month from "This month" or a due tag ----
+  function openRecord(kind, id) {
+    setRecordTarget({ kind, id, month: asOfKey });
+  }
+
+  // Pre-fills a payment with last month's split, or else puts the amount due on
+  // the first name.
+  function recordDefaults(loanId, monthKey) {
+    const entries = payments[loanId] || {};
+    if (entries[monthKey]) return { amounts: entries[monthKey].amounts, note: null };
+    const prevMonth = entries[monthKeyAdd(monthKey, -1)];
+    if (prevMonth && prevMonth.amounts) return { amounts: prevMonth.amounts, note: "Filled in from last month — change anything that’s different." };
+    const summary = lenderSummaries.find((x) => x.id === loanId);
+    const pay = summary && payableThisMonth(summary);
+    const names = namesFor(loanId);
+    if (pay && names.length) return { amounts: { [names[0]]: Math.round(pay.amount) }, note: "Filled in with the amount due — split it between people if needed." };
+    return { amounts: null, note: null };
+  }
+
   // The header's + adds to whichever list is showing: Debts or Income.
   const canAddFromHeader = view === "loans" || view === "income";
+
+  // ---- This month: what's due and what's coming in, by date ----
+  const thisMonthItems = [];
+  for (const l of lenderSummaries) {
+    const entry = (payments[l.id] || {})[asOfKey];
+    const paid = entry ? Object.values(entry.amounts || {}).reduce((s, v) => s + (Number(v) || 0), 0) : 0;
+    if (l.remaining <= 0.5 && !entry) continue;
+    const pay = payableThisMonth(l);
+    if (!pay && !l.dueDay && !entry) continue;
+    thisMonthItems.push({
+      kind: "debt",
+      id: l.id,
+      name: l.name,
+      day: l.dueDay || null,
+      amount: entry ? paid : pay ? pay.amount : null,
+      paid,
+      short: l.shortThisMonth > 0.5 ? l.shortThisMonth : 0,
+      fromPlan: !entry && pay && pay.fromPlan,
+      status: l.isPaidThisMonth ? "paid" : l.shortThisMonth > 0.5 ? "short" : l.isOverdue ? "overdue" : l.isDueSoon ? "soon" : entry ? "paid" : "upcoming",
+      daysUntil: l.daysUntilDue,
+      canEdit: access(l.id).canEdit,
+    });
+  }
+  for (const src of activeIncomes) {
+    const rec = (incomeRecords[src.id] || {})[asOfKey];
+    thisMonthItems.push({
+      kind: "income",
+      id: src.id,
+      name: src.name,
+      day: src.incomeDay || null,
+      amount: rec ? Number(rec.income) || 0 : Math.round(expectedIncomeFor(src, asOfKey)),
+      status: rec ? "received" : "expected",
+      canEdit: access(src.id).canEdit,
+    });
+  }
+  thisMonthItems.sort((a, b) => (a.day || 99) - (b.day || 99) || a.name.localeCompare(b.name));
+  // Still to pay: what's due and not yet paid (for a part-paid month, the shortfall).
+  const monthDue = thisMonthItems
+    .filter((x) => x.kind === "debt" && x.status !== "paid" && !x.fromPlan)
+    .reduce((s, x) => s + (x.status === "short" ? x.short : x.amount || 0), 0);
+  const monthPaid = thisMonthItems.filter((x) => x.kind === "debt").reduce((s, x) => s + (x.paid || 0), 0);
+  const monthIn = thisMonthItems.filter((x) => x.kind === "income").reduce((s, x) => s + (x.amount || 0), 0);
+  const isEmptyAccount = !hasSettings && lenders.length === 0 && incomes.length === 0;
 
   return (
     <div className="fl-shell">
@@ -2947,17 +2260,71 @@ export default function FamilyLedger() {
             </>
           ) : (
             <>
-              <h1 className="fl-title fl-serif">Family Ledger</h1>
-              <p className="fl-subtitle">
-                Shared ledger — {people.length > 0 ? people.join(", ") : "no contributors added yet"}
-              </p>
+              <h1 className="fl-title fl-serif">Ledger</h1>
+              <p className="fl-subtitle">{myEmail}</p>
             </>
           )}
         </div>
       </div>
 
       <div className="fl-content">
-        {view === "dashboard" && (
+        {view === "dashboard" && isEmptyAccount && (
+          <div className="fl-panel">
+            <p className="fl-panel-title fl-serif">Welcome to your Ledger</p>
+            {canImport ? (
+              <>
+                <p className="fl-card-sub" style={{ marginBottom: 12 }}>
+                  The old shared family ledger is still here, with {oldLedger.ledger.lenders.length} debt
+                  {oldLedger.ledger.lenders.length === 1 ? "" : "s"}, {(oldLedger.ledger.incomes || []).length} income
+                  source{(oldLedger.ledger.incomes || []).length === 1 ? "" : "s"} and every payment recorded so far.
+                  Import it into your account to carry on where you left off — the old copy isn’t changed. Only one
+                  person needs to do this; they can then share each debt with the others.
+                </p>
+                <div className="fl-form-actions">
+                  <button className="fl-btn secondary" onClick={startFresh} disabled={importing}>
+                    Start fresh
+                  </button>
+                  <button className="fl-btn" onClick={importFamilyLedger} disabled={importing}>
+                    {importing ? "Importing…" : "Import it"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="fl-card-sub" style={{ marginBottom: 12 }}>
+                  {oldImportedBy
+                    ? `${oldImportedBy} has already moved the family ledger into their account. Ask them to share the debts and income you look after with ${myEmail} — they’ll appear here. Meanwhile you can add your own.`
+                    : "Add your debts and income sources, and share any of them with the people you manage them with."}
+                </p>
+                <div className="fl-form-actions">
+                  <button className="fl-btn" onClick={startFresh}>
+                    Get started
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {view === "dashboard" && importResult && (
+          <div className="fl-panel">
+            <p className="fl-panel-title fl-serif">{importResult.matches ? "Imported ✓" : "Imported — please check"}</p>
+            <p className="fl-card-sub">
+              {importResult.debts} debts, {importResult.incomes} income sources and {importResult.entries} monthly entries
+              came across. Total still owed: {fmt(importResult.after)}
+              {importResult.matches
+                ? " — matches the old family ledger exactly."
+                : ` — the old ledger showed ${fmt(importResult.before)}. Tell Claude before relying on it.`}
+            </p>
+            <div className="fl-form-actions" style={{ marginTop: 10 }}>
+              <button className="fl-btn secondary" onClick={() => setImportResult(null)}>
+                OK
+              </button>
+            </div>
+          </div>
+        )}
+
+        {view === "dashboard" && !isEmptyAccount && (
           <>
             <div className="fl-summary">
               <p className="fl-summary-label">Total remaining across all debts</p>
@@ -2966,7 +2333,9 @@ export default function FamilyLedger() {
                 <div className="fl-progress-fill" style={{ width: (overallPct * 100).toFixed(1) + "%" }} />
               </div>
               <p className="fl-card-sub" style={{ marginTop: 8 }}>
-                {fmt(totalPaid)} paid of {fmt(totalAmount)}
+                {totalPaid >= 0
+                  ? `${fmt(totalPaid)} paid of ${fmt(totalAmount)}`
+                  : `Interest has added ${fmt(-totalPaid)} to the ${fmt(totalAmount)} borrowed`}
               </p>
             </div>
 
@@ -2993,6 +2362,77 @@ export default function FamilyLedger() {
               </div>
             )}
 
+            {thisMonthItems.length > 0 && (
+              <>
+                <p className="fl-section-title">This month · {monthKeyLabel(asOfKey)}</p>
+                <p className="fl-card-sub" style={{ marginTop: -4, marginBottom: 8 }}>
+                  {fmt(monthDue)} still to pay · {fmt(monthPaid)} paid · {fmt(monthIn)} coming in
+                </p>
+                <div className="fl-month-list">
+                  {thisMonthItems.map((x) => (
+                    <button
+                      key={x.kind + x.id}
+                      className="fl-month-item"
+                      disabled={!x.canEdit}
+                      onClick={() => openRecord(x.kind, x.id)}
+                      aria-label={(x.kind === "debt" ? "Record payment for " : "Record income for ") + x.name}
+                    >
+                      <span className={"fl-day" + (x.kind === "income" ? " fl-day-in" : "")}>
+                        <span className="fl-day-num">{x.day || "—"}</span>
+                        <span className="fl-day-mon">{monthKeyShort(asOfKey).split(" ")[0]}</span>
+                      </span>
+                      <span className="fl-month-item-main">
+                        <span className="fl-list-row-name">{x.name}</span>
+                        <span className="fl-card-sub">
+                          {x.kind === "income"
+                            ? x.status === "received"
+                              ? `${fmt(x.amount)} came in`
+                              : `${fmt(x.amount)} expected`
+                            : x.status === "paid"
+                            ? `${fmt(x.amount)} paid`
+                            : x.status === "short"
+                            ? `${fmt(x.paid)} paid · ${fmt(x.short)} short`
+                            : x.amount == null
+                            ? "Payment due"
+                            : x.fromPlan
+                            ? `Plan suggests ${fmt(x.amount)}`
+                            : `${fmt(x.amount)} due`}
+                        </span>
+                      </span>
+                      <span
+                        className={
+                          x.status === "paid" || x.status === "received"
+                            ? "fl-chip chip-green"
+                            : x.status === "overdue" || x.status === "short"
+                            ? "fl-overdue"
+                            : "fl-chip chip-grey"
+                        }
+                        style={{ marginTop: 0 }}
+                      >
+                        {x.status === "paid"
+                          ? "Paid"
+                          : x.status === "received"
+                          ? "In"
+                          : x.status === "overdue"
+                          ? "Overdue"
+                          : x.status === "short"
+                          ? "Short"
+                          : x.status === "soon"
+                          ? x.daysUntil === 0
+                            ? "Today"
+                            : `In ${x.daysUntil} day${x.daysUntil === 1 ? "" : "s"}`
+                          : x.kind === "income"
+                          ? "Expected"
+                          : "Record"}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {lenderSummaries.length > 0 && <p className="fl-section-title">Your debts</p>}
+
             {lenderSummaries.length === 0 && (
               <div className="fl-empty">Nothing added yet. Add one from the Debts tab.</div>
             )}
@@ -3010,6 +2450,8 @@ export default function FamilyLedger() {
                   </div>
                   <p className="fl-card-sub">of {fmt(l.totalAmount)} total</p>
                   {(categoryLabel(l.category) ||
+                    !access(l.id).owner ||
+                    access(l.id).shares.length > 0 ||
                     l.protectFromGrowth ||
                     l.isPaidThisMonth ||
                     l.isOverdue ||
@@ -3019,6 +2461,7 @@ export default function FamilyLedger() {
                     l.behindPlan > 0.5) && (
                     <div className="fl-chip-row">
                       {categoryLabel(l.category) && <span className="fl-chip chip-tag">{categoryLabel(l.category)}</span>}
+                      <SharedChip a={access(l.id)} />
                       {l.protectFromGrowth && <span className="fl-chip chip-blue">protected</span>}
                       {l.isPaidThisMonth && (
                         <span className="fl-chip chip-green">
@@ -3026,7 +2469,15 @@ export default function FamilyLedger() {
                         </span>
                       )}
                       {l.isOverdue && (
-                        <span className="fl-overdue" style={{ marginTop: 0 }}>
+                        <span
+                          className="fl-overdue fl-tap"
+                          style={{ marginTop: 0 }}
+                          onClick={(e) => {
+                            if (!access(l.id).canEdit) return;
+                            e.stopPropagation();
+                            openRecord("debt", l.id);
+                          }}
+                        >
                           <AlertCircle size={12} /> Payment overdue for {monthKeyLabel(asOfKey)}
                           {payableThisMonth(l)
                             ? ` · ${payableThisMonth(l).fromPlan ? "plan " : ""}${fmt(payableThisMonth(l).amount)}`
@@ -3038,7 +2489,14 @@ export default function FamilyLedger() {
                           const when = l.daysUntilDue === 0 ? "today" : `in ${l.daysUntilDue} day${l.daysUntilDue === 1 ? "" : "s"}`;
                           const pay = payableThisMonth(l);
                           return (
-                            <span className="fl-chip chip-grey">
+                            <span
+                              className="fl-chip chip-grey fl-tap"
+                              onClick={(e) => {
+                                if (!access(l.id).canEdit) return;
+                                e.stopPropagation();
+                                openRecord("debt", l.id);
+                              }}
+                            >
                               {!pay
                                 ? `Due ${when}`
                                 : pay.fromPlan
@@ -3097,17 +2555,20 @@ export default function FamilyLedger() {
                         : `${((l.annualRate || 0) * 100).toFixed(2)}% p.a.`}
                       {l.dueDay ? ` · due on the ${ordinal(l.dueDay)}` : ""}
                     </div>
-                    {(categoryLabel(l.category) || l.protectFromGrowth) && (
+                    {(categoryLabel(l.category) || l.protectFromGrowth || !access(l.id).owner || access(l.id).shares.length > 0) && (
                       <div className="fl-chip-row" style={{ marginTop: 5 }}>
                         {categoryLabel(l.category) && <span className="fl-chip chip-tag">{categoryLabel(l.category)}</span>}
+                        <SharedChip a={access(l.id)} />
                         {l.protectFromGrowth && <span className="fl-chip chip-blue">protected</span>}
                       </div>
                     )}
                   </div>
-                  <button className="fl-icon-btn" onClick={() => setEditingLoanId(l.id)} aria-label="Edit debt">
-                    <Pencil size={16} />
-                  </button>
-                  <ConfirmButton label="delete debt" onConfirm={() => deleteLoan(l.id)} />
+                  {access(l.id).canEdit && (
+                    <button className="fl-icon-btn" onClick={() => setEditingLoanId(l.id)} aria-label="Edit debt">
+                      <Pencil size={16} />
+                    </button>
+                  )}
+                  {access(l.id).owner && <ConfirmButton label="delete debt" onConfirm={() => deleteLoan(l.id)} />}
                   <button className="fl-icon-btn" onClick={() => openLoan(l.id)} aria-label="Open debt">
                     <ChevronRight size={16} />
                   </button>
@@ -3192,16 +2653,21 @@ export default function FamilyLedger() {
                       {s.incomeDay ? ` · comes in on the ${ordinal(s.incomeDay)}` : ""}
                       {toDebtsByIncome[s.id] ? ` · ${fmt(toDebtsByIncome[s.id].amount)}/mo to debts` : ""}
                     </div>
-                    {categoryLabel(s.category, INCOME_CATEGORIES) && (
+                    {(categoryLabel(s.category, INCOME_CATEGORIES) || !access(s.id).owner || access(s.id).shares.length > 0) && (
                       <div className="fl-chip-row" style={{ marginTop: 5 }}>
-                        <span className="fl-chip chip-tag">{categoryLabel(s.category, INCOME_CATEGORIES)}</span>
+                        {categoryLabel(s.category, INCOME_CATEGORIES) && (
+                          <span className="fl-chip chip-tag">{categoryLabel(s.category, INCOME_CATEGORIES)}</span>
+                        )}
+                        <SharedChip a={access(s.id)} />
                       </div>
                     )}
                   </div>
-                  <button className="fl-icon-btn" onClick={() => setEditingIncomeId(s.id)} aria-label="Edit income source">
-                    <Pencil size={16} />
-                  </button>
-                  <ConfirmButton label="delete income source" onConfirm={() => deleteIncome(s.id)} />
+                  {access(s.id).canEdit && (
+                    <button className="fl-icon-btn" onClick={() => setEditingIncomeId(s.id)} aria-label="Edit income source">
+                      <Pencil size={16} />
+                    </button>
+                  )}
+                  {access(s.id).owner && <ConfirmButton label="delete income source" onConfirm={() => deleteIncome(s.id)} />}
                   <button className="fl-icon-btn" onClick={() => openIncome(s.id)} aria-label="Open income source">
                     <ChevronRight size={16} />
                   </button>
@@ -3230,6 +2696,7 @@ export default function FamilyLedger() {
                 const st = s.stats;
                 const records = incomeRecords[s.id] || {};
                 const suggestedMonth = getSuggestedMonth(s, records, asOfKey);
+                const acc = access(s.id);
                 const toGo =
                   st.monthsToPayback > 0
                     ? ` · about ${monthsLabel(st.monthsToPayback)} to go at the usual profit`
@@ -3243,9 +2710,11 @@ export default function FamilyLedger() {
                     <div className="fl-detail-head">
                       <div className="fl-card-row">
                         <span className="fl-card-sub">Capital put in</span>
-                        <button className="fl-icon-btn" onClick={() => setEditingIncomeId(s.id)} aria-label="Edit income source details">
-                          <Pencil size={14} />
-                        </button>
+                        {acc.canEdit && (
+                          <button className="fl-icon-btn" onClick={() => setEditingIncomeId(s.id)} aria-label="Edit income source details">
+                            <Pencil size={14} />
+                          </button>
+                        )}
                       </div>
                       <p className="fl-stat-value fl-mono" style={{ fontSize: 20 }}>{fmt(st.capital)}</p>
                       <p className="fl-card-sub" style={{ marginTop: 4 }}>
@@ -3324,18 +2793,18 @@ export default function FamilyLedger() {
                         />
                       ) : (
                         <div className="fl-month-row" key={row.key}>
-                          <div className="fl-month-top" onClick={() => setPendingIncomeMonth(row.key)}>
+                          <div className="fl-month-top" onClick={() => acc.canEdit && setPendingIncomeMonth(row.key)}>
                             <span className="fl-month-name">{monthKeyShort(row.key)}</span>
                             <span className="fl-month-balance fl-mono" style={{ color: row.recorded ? profitColor(row.profit) : undefined }}>
                               {row.recorded ? (row.profit < 0 ? "−" : "") + fmt(Math.abs(row.profit)) : "—"}
                             </span>
                           </div>
-                          <div className="fl-month-breakdown" onClick={() => setPendingIncomeMonth(row.key)}>
+                          <div className="fl-month-breakdown" onClick={() => acc.canEdit && setPendingIncomeMonth(row.key)}>
                             {row.recorded
                               ? `Income ${fmt(row.income)} · Expenses ${fmt(row.expenses)}`
                               : "Not recorded yet"}
                           </div>
-                          {row.recorded && (
+                          {row.recorded && acc.canEdit && (
                             <div style={{ marginTop: 6 }}>
                               <ConfirmButton
                                 label={"delete " + monthKeyShort(row.key) + " figures"}
@@ -3366,11 +2835,22 @@ export default function FamilyLedger() {
                       />
                     )}
 
-                    {pendingIncomeMonth === null && st.rows.length > 0 && (
+                    {pendingIncomeMonth === null && st.rows.length > 0 && acc.canEdit && (
                       <button className="fl-add-row" onClick={() => setPendingIncomeMonth(suggestedMonth)}>
                         <Plus size={16} /> Record a month
                       </button>
                     )}
+
+                    <div style={{ marginTop: 18 }}>
+                      <SharePanel
+                        itemName={s.name}
+                        kindLabel="income source"
+                        a={acc}
+                        myEmail={myEmail}
+                        onShare={(email, role) => shareItem(s.id, email, role)}
+                        onUnshare={(email, leaving) => unshareItem(s.id, email, leaving)}
+                      />
+                    </div>
                   </>
                 );
               })()
@@ -3378,9 +2858,53 @@ export default function FamilyLedger() {
           </>
         )}
 
-        {view === "people" && (
+        {view === "account" && (
           <>
-            <p className="fl-section-title">Contributors</p>
+            <div className="fl-summary">
+              <p className="fl-summary-label">Signed in as</p>
+              <p className="fl-list-row-name" style={{ margin: "2px 0 10px" }}>{myEmail}</p>
+              <div className="fl-form-actions">
+                <button className="fl-btn secondary" onClick={() => supabase.auth.signOut()}>
+                  <LogOut size={14} /> Sign out
+                </button>
+              </div>
+            </div>
+
+            {oldLedger && (
+              <div className="fl-panel">
+                <p className="fl-panel-title fl-serif">The old family ledger is still open</p>
+                <p className="fl-card-sub" style={{ marginBottom: 10 }}>
+                  Anyone with the app’s link can still read and change the old shared copy.
+                  {oldImportedBy === myEmail
+                    ? " Once you’ve checked your imported debts, lock it (step 4 of the setup guide)."
+                    : oldImportedBy
+                    ? ` ${oldImportedBy} has imported it and will lock it once they’ve checked it.`
+                    : " Import it into your account first, then lock it (step 4 of the setup guide)."}
+                </p>
+                {canImport && oldImportedBy !== myEmail && !lenders.some((l) => access(l.id).owner) && (
+                  <div className="fl-form-actions">
+                    <button className="fl-btn" onClick={importFamilyLedger} disabled={importing}>
+                      {importing ? "Importing…" : "Import it into my account"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <p className="fl-section-title">Reminders</p>
+            <div className="fl-panel">
+              <p className="fl-card-sub" style={{ marginBottom: 10 }}>
+                Add each debt’s monthly due date to your phone’s calendar, with an alert at 9 am the day before. Debts
+                need a due day set. If amounts change, add them again.
+              </p>
+              <div className="fl-form-actions">
+                <button className="fl-btn" onClick={downloadCalendar}>
+                  <CalendarPlus size={14} /> Add due dates to my calendar
+                </button>
+              </div>
+            </div>
+
+            <p className="fl-section-title">Names for recording payments</p>
             {people.map((p) => (
               <div className="fl-list-row" key={p}>
                 <div className="fl-list-row-main">
@@ -3389,12 +2913,10 @@ export default function FamilyLedger() {
                 <ConfirmButton label={"remove " + p} onConfirm={() => deletePerson(p)} />
               </div>
             ))}
-            {people.length === 0 && <div className="fl-empty">No contributors yet.</div>}
-
+            {people.length === 0 && <div className="fl-empty">No names yet.</div>}
             <div className="fl-panel" style={{ marginTop: 12 }}>
-              <p className="fl-panel-title fl-serif">Add a contributor</p>
               <div className="fl-field">
-                <label>Name</label>
+                <label>Add a name</label>
                 <input
                   value={newPerson}
                   onChange={(e) => setNewPerson(e.target.value)}
@@ -3407,10 +2929,61 @@ export default function FamilyLedger() {
                   Add
                 </button>
               </div>
+              <p className="fl-card-sub" style={{ marginTop: 10 }}>
+                When you record a payment you can split it between these names. Removing a name keeps their past
+                payments.
+              </p>
             </div>
-            <p className="fl-card-sub" style={{ marginTop: 10 }}>
-              Removing someone keeps their past recorded contributions but leaves them out of new entries.
-            </p>
+
+            <p className="fl-section-title">Activity</p>
+            {activity === null && <p className="fl-card-sub">Loading…</p>}
+            {activity && activity.length === 0 && <p className="fl-card-sub">No changes yet.</p>}
+            {activity &&
+              activity.map((h) => {
+                const d = describeChange(h, {
+                  myEmail,
+                  names: Object.fromEntries([...lenders, ...incomes].map((x) => [x.id, x.name])),
+                });
+                return (
+                  <div className="fl-activity-row" key={h.id}>
+                    <span>
+                      <strong>{d.who}</strong> {d.text}
+                    </span>
+                    <span className="fl-card-sub">{d.when}</span>
+                  </div>
+                );
+              })}
+
+            <p className="fl-section-title">Recently deleted</p>
+            {deletedItems && deletedItems.length === 0 && <p className="fl-card-sub">Nothing deleted.</p>}
+            {deletedItems &&
+              deletedItems.map((it) => (
+                <div className="fl-list-row" key={it.id}>
+                  <div className="fl-list-row-main">
+                    <div className="fl-list-row-name">{it.data.name || "Untitled"}</div>
+                    <div className="fl-list-row-sub">
+                      {it.kind === "debt" ? "Debt" : "Income source"} · deleted{" "}
+                      {new Date(it.deleted_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                    </div>
+                  </div>
+                  <button className="fl-icon-btn" onClick={() => restoreDeleted(it)} aria-label={"Restore " + (it.data.name || "item")}>
+                    <RotateCcw size={16} /> <span className="fl-icon-label">Restore</span>
+                  </button>
+                </div>
+              ))}
+
+            <p className="fl-section-title">Backup</p>
+            <div className="fl-panel">
+              <p className="fl-card-sub" style={{ marginBottom: 10 }}>
+                Download a copy of everything you can see — debts, income, every monthly entry and your settings — to
+                keep somewhere safe.
+              </p>
+              <div className="fl-form-actions">
+                <button className="fl-btn secondary" onClick={downloadBackup}>
+                  <Download size={14} /> Download a backup
+                </button>
+              </div>
+            </div>
           </>
         )}
 
@@ -3608,6 +3181,8 @@ export default function FamilyLedger() {
                 const summary = lenderSummaries.find((s) => s.id === selectedLoan.id);
                 const isOverdue = summary.isOverdue;
                 const suggestedMonth = getSuggestedMonth(selectedLoan, entries, asOfKey);
+                const acc = access(selectedLoan.id);
+                const names = namesFor(selectedLoan.id);
                 const plan = selectedLoan.repaymentPlan;
                 const planCharge = plan ? (selectedLoan.totalAmount || 0) - plan.received : 0;
                 const planRate = plan ? planYearlyRate(plan.received, plan.amounts) : null;
@@ -3622,9 +3197,11 @@ export default function FamilyLedger() {
                     <div className="fl-detail-head">
                       <div className="fl-card-row">
                         <span className="fl-card-sub">{plan ? "Total to repay" : "Total amount borrowed"}</span>
-                        <button className="fl-icon-btn" onClick={() => setEditingLoanId(selectedLoan.id)} aria-label="Edit debt details">
-                          <Pencil size={14} />
-                        </button>
+                        {acc.canEdit && (
+                          <button className="fl-icon-btn" onClick={() => setEditingLoanId(selectedLoan.id)} aria-label="Edit debt details">
+                            <Pencil size={14} />
+                          </button>
+                        )}
                       </div>
                       <p className="fl-stat-value fl-mono" style={{ fontSize: 20 }}>{fmt(selectedLoan.totalAmount)}</p>
                       <p className="fl-card-sub" style={{ marginTop: 4 }}>
@@ -3713,20 +3290,23 @@ export default function FamilyLedger() {
                           onMonthKeyChange={setPendingMonthKey}
                           defaults={row.amounts}
                           isExisting={row.recorded}
-                          people={people}
+                          people={names}
                           title={(row.recorded ? "Edit " : "Record ") + monthKeyLabel(row.key)}
                           onCancel={() => setPendingMonthKey(null)}
                           onSave={(amounts) => saveMonthEntry(selectedLoan.id, row.key, amounts)}
                         />
                       ) : (
                         <div className="fl-month-row" key={row.key}>
-                          <div className="fl-month-top" onClick={() => setPendingMonthKey(row.key)}>
+                          <div className="fl-month-top" onClick={() => acc.canEdit && setPendingMonthKey(row.key)}>
                             <span className="fl-month-name">{monthKeyShort(row.key)}</span>
                             <span className="fl-month-balance fl-mono">{fmt(row.remaining)}</span>
                           </div>
-                          <div className="fl-month-breakdown" onClick={() => setPendingMonthKey(row.key)}>
+                          <div className="fl-month-breakdown" onClick={() => acc.canEdit && setPendingMonthKey(row.key)}>
                             {row.recorded
-                              ? people.map((p) => `${p} ${fmt(row.amounts[p] || 0)}`).join(" · ") +
+                              ? names
+                                  .filter((p) => people.includes(p) || (Number(row.amounts[p]) || 0) !== 0)
+                                  .map((p) => `${p} ${fmt(row.amounts[p] || 0)}`)
+                                  .join(" · ") +
                                 (selectedLoan.type !== "fixed" ? ` — interest ${fmt(row.interest)}` : "")
                               : selectedLoan.type !== "fixed"
                               ? `No payment recorded — interest ${fmt(row.interest)} added`
@@ -3740,7 +3320,7 @@ export default function FamilyLedger() {
                                 <AlertCircle size={12} /> {fmt(planDueFor(selectedLoan, row.key) - row.totalPaid)} short
                               </p>
                             )}
-                          {row.recorded && (
+                          {row.recorded && acc.canEdit && (
                             <div style={{ marginTop: 6 }}>
                               <ConfirmButton
                                 label={"delete " + monthKeyShort(row.key) + " entry"}
@@ -3764,18 +3344,29 @@ export default function FamilyLedger() {
                         onMonthKeyChange={setPendingMonthKey}
                         defaults={null}
                         isExisting={false}
-                        people={people}
+                        people={names}
                         title={"Record " + monthKeyLabel(pendingMonthKey)}
                         onCancel={() => setPendingMonthKey(null)}
                         onSave={(amounts) => saveMonthEntry(selectedLoan.id, pendingMonthKey, amounts)}
                       />
                     )}
 
-                    {pendingMonthKey === null && (
+                    {pendingMonthKey === null && acc.canEdit && (
                       <button className="fl-add-row" onClick={() => setPendingMonthKey(suggestedMonth)}>
                         <Plus size={16} /> Record a payment
                       </button>
                     )}
+
+                    <div style={{ marginTop: 18 }}>
+                      <SharePanel
+                        itemName={selectedLoan.name}
+                        kindLabel="debt"
+                        a={acc}
+                        myEmail={myEmail}
+                        onShare={(email, role) => shareItem(selectedLoan.id, email, role)}
+                        onUnshare={(email, leaving) => unshareItem(selectedLoan.id, email, leaving)}
+                      />
+                    </div>
                   </>
                 );
               })()
@@ -3784,7 +3375,66 @@ export default function FamilyLedger() {
         )}
       </div>
 
-      {toast && <div className="fl-toast">{toast}</div>}
+      {toast && (
+        <div className="fl-toast" role="status">
+          {toast.msg}
+          {toast.undo && (
+            <button
+              className="fl-toast-undo"
+              onClick={() => {
+                const undo = toast.undo;
+                setToast(null);
+                undo();
+              }}
+            >
+              Undo
+            </button>
+          )}
+        </div>
+      )}
+
+      {recordTarget &&
+        (() => {
+          const t = recordTarget;
+          if (t.kind === "debt") {
+            const loan = lenders.find((l) => l.id === t.id);
+            if (!loan) return null;
+            const d = recordDefaults(t.id, t.month);
+            return (
+              <Sheet title={loan.name} onClose={() => setRecordTarget(null)}>
+                {d.note && <p className="fl-card-sub" style={{ margin: "0 0 10px" }}>{d.note}</p>}
+                <MonthEntryForm
+                  key={t.month}
+                  monthKey={t.month}
+                  onMonthKeyChange={(m) => setRecordTarget({ ...t, month: m })}
+                  defaults={d.amounts}
+                  isExisting={!!(payments[t.id] || {})[t.month]}
+                  people={namesFor(t.id)}
+                  title={((payments[t.id] || {})[t.month] ? "Edit " : "Record ") + monthKeyLabel(t.month)}
+                  onCancel={() => setRecordTarget(null)}
+                  onSave={(amounts) => saveMonthEntry(t.id, t.month, amounts)}
+                />
+              </Sheet>
+            );
+          }
+          const src = incomes.find((x) => x.id === t.id);
+          if (!src) return null;
+          const rec = (incomeRecords[t.id] || {})[t.month];
+          return (
+            <Sheet title={src.name} onClose={() => setRecordTarget(null)}>
+              <IncomeMonthForm
+                key={t.month}
+                monthKey={t.month}
+                onMonthKeyChange={(m) => setRecordTarget({ ...t, month: m })}
+                defaults={rec || { income: Math.round(expectedIncomeFor(src, t.month)), expenses: src.usualExpenses }}
+                isExisting={!!rec}
+                title={(rec ? "Edit " : "Record ") + monthKeyLabel(t.month)}
+                onCancel={() => setRecordTarget(null)}
+                onSave={(figures) => saveIncomeMonth(t.id, t.month, figures)}
+              />
+            </Sheet>
+          );
+        })()}
 
       {showAddLoan && (
         <Sheet title="Add a new debt" onClose={() => setShowAddLoan(false)}>
@@ -3850,12 +3500,15 @@ export default function FamilyLedger() {
             Strategy
           </button>
           <button
-            className={"fl-navbtn " + (view === "people" ? "active" : "")}
-            onClick={() => setView("people")}
+            className={"fl-navbtn " + (view === "account" ? "active" : "")}
+            onClick={() => {
+              setView("account");
+              loadAccountLists();
+            }}
           >
             <div className="fl-ribbon"><div className="fl-ribbon-grain"></div></div>
-            <Users size={16} />
-            People
+            <User size={16} />
+            Account
           </button>
         </div>
       </div>
