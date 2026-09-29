@@ -37,6 +37,16 @@ On the Strategy tab, "Debt-free in ✎" sets `strategy.targetMonths`. `budgetFor
 
 The Strategy tab's monthly budget can be built from parts in `strategy.budgetParts`: `{ kind: "set", label, amount }` or `{ kind: "income", incomeId, share }`, where `share` is 0–1 of that income source's usual profit this month. The effective budget is `budgetTotal(budgetPartsOf(strategy), incomesById, asOfKey)`, recomputed every time, so income shares follow profit changes and yearly rises. With no parts saved (older data), `budgetPartsOf` treats the single `strategy.budget` as one "Set amount" part, so the total is exactly the old number. `strategy.budget` is still written as a snapshot of the total whenever parts are saved. Deleting an income source removes its budget parts. The goal card's "Add ₹X to my budget" tops up a set part labelled `GOAL_EXTRA_LABEL`. It's edited in the `BudgetEditor` sheet. The Income list, the source page and the Dashboard show each source's share going to debts.
 
+## Dashboard and Income summaries
+
+- Dashboard "due soon" and "overdue" tags show what the debt asks for this month (`payableThisMonth` in the component): a plan's scheduled amount, else the minimum (for a protected debt, at least this month's interest), else the Strategy plan's suggestion labelled "plan". It's capped at the balance.
+- Debt progress bars are clamped to between 0 and 1. When interest grows a balance past the amount borrowed, "paid" goes negative, and a negative CSS width used to draw the bar as full.
+- The Income tab opens with a combined summary: usual profit, money in and out, capital earned back overall, profit so far, this month, and the amount going to debts.
+
+## Known issue (not yet fixed)
+
+`computeSchedule` already adds the current month's interest to the balance, and `simulateStrategy`, `simulateStatusQuo` and `budgetForTarget` then add another month's interest in their month 1, which is labelled as the current month. So Strategy amounts, and the total interest, run about one month of interest high. Fixing this changes every plan's numbers, so it needs the owner's go-ahead and a careful before/after check.
+
 ## Testing without touching live data
 
 `.env.local` points at the live family database, so never click Save in the normal dev server. To test the form end-to-end, run a small local stand-in for the Supabase `ledger` table with made-up loans (GET returns `[{payload}]`, POST upsert stores it and returns 201, plus CORS). Then start a second Vite on another port with `VITE_SUPABASE_URL=http://127.0.0.1:<port> VITE_SUPABASE_ANON_KEY=test`, since shell env vars override `.env.local`. Confirm no requests go to supabase.co before saving anything.

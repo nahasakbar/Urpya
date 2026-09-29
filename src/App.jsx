@@ -2565,13 +2565,16 @@ export default function FamilyLedger() {
       dueThisMonth,
       shortThisMonth,
       behindPlan,
+      interestThisMonth: currentRow ? currentRow.interest : 0,
     };
   });
 
   const totalAmount = lenderSummaries.reduce((s, l) => s + (Number(l.totalAmount) || 0), 0);
   const totalRemaining = lenderSummaries.reduce((s, l) => s + l.remaining, 0);
   const totalPaid = totalAmount - totalRemaining;
-  const overallPct = totalAmount > 0 ? Math.min(totalPaid / totalAmount, 1) : 0;
+  // Kept between 0 and 1: when interest has grown balances past the amounts
+  // borrowed, "paid" goes negative, and a negative width drew the bar as full.
+  const overallPct = totalAmount > 0 ? Math.max(Math.min(totalPaid / totalAmount, 1), 0) : 0;
 
   // Income sources: kept apart from the debts, and never part of their maths.
   const incomes = data.incomes || [];
@@ -2585,6 +2588,16 @@ export default function FamilyLedger() {
     return sum + ((Number(r.income) || 0) - (Number(r.expenses) || 0));
   }, 0);
   const usualProfitTotal = activeIncomes.reduce((sum, s) => sum + s.stats.usualProfit, 0);
+  // Combined figures for the summary card at the top of the Income tab.
+  const usualIncomeTotal = activeIncomes.reduce((sum, s) => sum + expectedIncomeFor(s, asOfKey), 0);
+  const usualExpensesTotal = activeIncomes.reduce((sum, s) => sum + (Number(s.usualExpenses) || 0), 0);
+  const incomeCapital = incomeSummaries.reduce((sum, s) => sum + s.stats.capital, 0);
+  const incomeEarnedBack = incomeSummaries.reduce(
+    (sum, s) => sum + Math.min(Math.max(s.stats.totalProfit, 0), s.stats.capital),
+    0
+  );
+  const incomeProfitSoFar = incomeSummaries.reduce((sum, s) => sum + s.stats.totalProfit, 0);
+  const signedFmt = (v) => (v < 0 ? "−" + fmt(-v) : fmt(v));
 
   const strategy = data.strategy || { budget: 0, type: "avalanche" };
   // The monthly debt budget: the old single amount, or the total of its parts
@@ -2634,6 +2647,20 @@ export default function FamilyLedger() {
       ? simulateStrategy(strategyLoans, strategy.type, effectiveBudget)
       : null;
   const statusQuoResult = strategyLoans.length > 0 ? simulateStatusQuo(strategyLoans) : null;
+
+  // What a debt asks for this month, for the Dashboard's "due" tags: a repayment
+  // plan's scheduled amount, else its minimum (a protected debt's is at least this
+  // month's interest). A flexible debt has no required amount, so it shows the
+  // Strategy plan's suggestion instead, labelled as such. Never more than is owed.
+  function payableThisMonth(l) {
+    const capped = (amount, fromPlan) => ({ amount: Math.min(amount, l.remaining), fromPlan });
+    if (l.repaymentPlan) return capped(l.dueThisMonth, false);
+    const min = Number(l.minPayment) || 0;
+    const required = l.protectFromGrowth ? Math.max(min, l.interestThisMonth) : min;
+    if (required > 0.5) return capped(required, false);
+    const planned = strategyResult && strategyResult.feasible ? strategyResult.firstMonthPlan[l.id] || 0 : 0;
+    return planned > 0.5 ? capped(planned, true) : null;
+  }
   // Debt-free goal: the monthly budget needed to clear everything by then.
   const goalMonths = strategy.targetMonths || null;
   const goalResult =
@@ -2919,7 +2946,7 @@ export default function FamilyLedger() {
             )}
 
             {lenderSummaries.map((l) => {
-              const pct = l.totalAmount > 0 ? Math.min((l.totalAmount - l.remaining) / l.totalAmount, 1) : 0;
+              const pct = l.totalAmount > 0 ? Math.max(Math.min((l.totalAmount - l.remaining) / l.totalAmount, 1), 0) : 0;
               return (
                 <div className="fl-card" key={l.id} onClick={() => openLoan(l.id)}>
                   <div className="fl-card-row">
@@ -2949,15 +2976,25 @@ export default function FamilyLedger() {
                       {l.isOverdue && (
                         <span className="fl-overdue" style={{ marginTop: 0 }}>
                           <AlertCircle size={12} /> Payment overdue for {monthKeyLabel(asOfKey)}
+                          {payableThisMonth(l)
+                            ? ` · ${payableThisMonth(l).fromPlan ? "plan " : ""}${fmt(payableThisMonth(l).amount)}`
+                            : ""}
                         </span>
                       )}
-                      {l.isDueSoon && (
-                        <span className="fl-chip chip-grey">
-                          {l.daysUntilDue === 0
-                            ? "Due today"
-                            : `Due in ${l.daysUntilDue} day${l.daysUntilDue === 1 ? "" : "s"}`}
-                        </span>
-                      )}
+                      {l.isDueSoon &&
+                        (() => {
+                          const when = l.daysUntilDue === 0 ? "today" : `in ${l.daysUntilDue} day${l.daysUntilDue === 1 ? "" : "s"}`;
+                          const pay = payableThisMonth(l);
+                          return (
+                            <span className="fl-chip chip-grey">
+                              {!pay
+                                ? `Due ${when}`
+                                : pay.fromPlan
+                                ? `Due ${when} · plan ${fmt(pay.amount)}`
+                                : `${fmt(pay.amount)} due ${when}`}
+                            </span>
+                          );
+                        })()}
                       {l.missedMonths.length > 0 && (
                         <span className="fl-overdue" style={{ marginTop: 0 }}>
                           <AlertCircle size={12} />{" "}
@@ -3034,6 +3071,54 @@ export default function FamilyLedger() {
 
         {view === "income" && (
           <>
+            {incomes.length > 0 && (
+              <div className="fl-summary">
+                <p className="fl-summary-label">All income sources · usual profit a month</p>
+                <p
+                  className="fl-summary-value fl-mono"
+                  style={{ color: usualProfitTotal < 0 ? "var(--maroon)" : undefined }}
+                >
+                  {signedFmt(usualProfitTotal)}
+                </p>
+                <p className="fl-card-sub" style={{ marginTop: 4 }}>
+                  {fmt(usualIncomeTotal)} in · {fmt(usualExpensesTotal)} out · {activeIncomes.length} source
+                  {activeIncomes.length === 1 ? "" : "s"}
+                </p>
+                {incomeCapital > 0 && (
+                  <>
+                    <div className="fl-progress-track">
+                      <div
+                        className="fl-progress-fill"
+                        style={{ width: ((incomeEarnedBack / incomeCapital) * 100).toFixed(1) + "%" }}
+                      />
+                    </div>
+                    <p className="fl-card-sub" style={{ marginTop: 8 }}>
+                      {fmt(incomeEarnedBack)} of {fmt(incomeCapital)} capital earned back (
+                      {Math.floor((incomeEarnedBack / incomeCapital) * 100)}%)
+                    </p>
+                  </>
+                )}
+                <div className="fl-budget-breakdown">
+                  <div className="fl-budget-line">
+                    <span>Profit so far (recorded months)</span>
+                    <span className="fl-mono">{signedFmt(incomeProfitSoFar)}</span>
+                  </div>
+                  <div className="fl-budget-line">
+                    <span>
+                      {monthKeyLabel(asOfKey)} · {recordedThisMonth.length} of {activeIncomes.length} recorded
+                    </span>
+                    <span className="fl-mono">{recordedThisMonth.length > 0 ? signedFmt(profitThisMonth) : "—"}</span>
+                  </div>
+                  {incomeToDebts > 0.5 && (
+                    <div className="fl-budget-line">
+                      <span>Goes toward debts each month</span>
+                      <span className="fl-mono">{fmt(incomeToDebts)}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             <p className="fl-section-title">Your income sources</p>
             {incomeSummaries.map((s) =>
               editingIncomeId === s.id ? (
