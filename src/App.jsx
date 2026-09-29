@@ -1076,7 +1076,12 @@ function LenderForm({ initial, onSave, onCancel }) {
   const [category, setCategory] = useState(initial && initial.category ? initial.category : null);
   // The interest switch is the loan's `type`: on = "interest", off = "fixed".
   const [type, setType] = useState(initial ? initial.type || "interest" : "fixed");
-  const [amount, setAmount] = useState(initial ? String(initial.totalAmount) : "");
+  const initialPlan = initial && initial.repaymentPlan ? initial.repaymentPlan : null;
+  // The top amount is always what was borrowed. On a repayment plan that's the
+  // amount received, and the (larger) total to repay is asked for separately.
+  const [amount, setAmount] = useState(
+    initial ? String(initialPlan ? initialPlan.received : initial.totalAmount) : ""
+  );
   const [rate, setRate] = useState(initial ? String((initial.annualRate || 0) * 100) : "");
   const [minPayment, setMinPayment] = useState(initial ? String(initial.minPayment || 0) : "0");
   const [protectFromGrowth, setProtectFromGrowth] = useState(initial ? !!initial.protectFromGrowth : false);
@@ -1092,24 +1097,23 @@ function LenderForm({ initial, onSave, onCancel }) {
   // Left empty, the term starts the same month tracking started.
   const [termStart, setTermStart] = useState(initial && initial.termStart ? initial.termStart : "");
   const [termError, setTermError] = useState(false);
-  // Repayment plan: a set total to repay (the amount field) with monthly
-  // amounts over the term. planAmounts holds hand-adjusted amounts; null means
-  // spread evenly from the first payment.
-  const initialPlan = initial && initial.repaymentPlan ? initial.repaymentPlan : null;
+  // Repayment plan: a set total to repay with monthly amounts over the term.
+  // planAmounts holds hand-adjusted amounts; null means spread evenly from the
+  // first payment.
   const [hasPlan, setHasPlan] = useState(!!initialPlan);
-  const [received, setReceived] = useState(initialPlan ? String(initialPlan.received) : "");
+  const [repayTotal, setRepayTotal] = useState(initialPlan ? String(initial.totalAmount) : "");
   const [firstPayment, setFirstPayment] = useState(initialPlan ? String(initialPlan.amounts[0]) : "");
   const [planAmounts, setPlanAmounts] = useState(initialPlan ? initialPlan.amounts.map(String) : null);
   const [planError, setPlanError] = useState("");
 
   const termMonthsValue = Math.round(termUnit === "years" ? Number(termLength) * 12 : Number(termLength));
-  const spread = hasPlan ? spreadPlanAmounts(Number(amount), Number(firstPayment), termMonthsValue) : null;
+  const spread = hasPlan ? spreadPlanAmounts(Number(repayTotal), Number(firstPayment), termMonthsValue) : null;
   const shownAmounts =
     planAmounts && planAmounts.length === termMonthsValue ? planAmounts : spread ? spread.map(String) : null;
   const planNumbers = shownAmounts ? shownAmounts.map((v) => Number(v) || 0) : null;
   const planSum = planNumbers ? planNumbers.reduce((s, v) => s + v, 0) : 0;
-  const planMismatch = !!planNumbers && Math.abs(planSum - Number(amount)) > 0.5;
-  const planRate = planNumbers && !planMismatch ? planYearlyRate(Number(received), planNumbers) : null;
+  const planMismatch = !!planNumbers && Math.abs(planSum - Number(repayTotal)) > 0.5;
+  const planRate = planNumbers && !planMismatch ? planYearlyRate(Number(amount), planNumbers) : null;
   const planFirstKey = termStart || startMonth;
 
   // Changing what the plan is built from re-spreads it evenly.
@@ -1128,11 +1132,11 @@ function LenderForm({ initial, onSave, onCancel }) {
       const step = Math.abs(planNumbers[1] - first);
       shape = `${last > first ? "Rises" : "Falls"} by about ${fmt(step)} a month, from ${fmt(first)} to ${fmt(last)}.`;
     } else shape = `From ${fmt(first)} to ${fmt(last)}.`;
-    const charge = Number(amount) - Number(received);
+    const charge = Number(repayTotal) - Number(amount);
     return (
       <div className="fl-plan-preview">
         {shape}
-        {Number(received) > 0 && charge > 0.5 && (
+        {Number(amount) > 0 && charge > 0.5 && (
           <>
             <br />
             Lender’s charge {fmt(charge)}
@@ -1153,14 +1157,14 @@ function LenderForm({ initial, onSave, onCancel }) {
       </div>
 
       <div className="fl-field">
-        <label>{hasPlan ? "Total to repay (₹)" : "Total amount borrowed (₹)"}</label>
+        <label>Total amount borrowed (₹)</label>
         <input
           type="number"
           inputMode="decimal"
           value={amount}
           onChange={(e) => {
             setAmount(e.target.value);
-            resetPlan();
+            setPlanError("");
           }}
           placeholder="0"
         />
@@ -1205,14 +1209,14 @@ function LenderForm({ initial, onSave, onCancel }) {
 
       {hasPlan && (
         <div className="fl-field">
-          <label>Amount you received (₹)</label>
+          <label>Total to repay (₹)</label>
           <input
             type="number"
             inputMode="decimal"
-            value={received}
+            value={repayTotal}
             onChange={(e) => {
-              setReceived(e.target.value);
-              setPlanError("");
+              setRepayTotal(e.target.value);
+              resetPlan();
             }}
             placeholder="0"
           />
@@ -1367,7 +1371,7 @@ function LenderForm({ initial, onSave, onCancel }) {
               <p className="fl-card-sub" style={{ marginTop: 8 }}>
                 Adds up to {fmt(planSum)}
                 {planMismatch
-                  ? ` — ${fmt(Math.abs(planSum - Number(amount)))} ${planSum > Number(amount) ? "more" : "less"} than the total to repay.`
+                  ? ` — ${fmt(Math.abs(planSum - Number(repayTotal)))} ${planSum > Number(repayTotal) ? "more" : "less"} than the total to repay.`
                   : " ✓"}
               </p>
               {planAmounts && (
@@ -1440,8 +1444,8 @@ function LenderForm({ initial, onSave, onCancel }) {
                 setTermError(true);
                 return;
               }
-              if (!(Number(amount) > 0)) return setPlanError("Enter the total you have to repay.");
-              if (!(Number(received) > 0)) return setPlanError("Enter the amount you received.");
+              if (!(Number(amount) > 0)) return setPlanError("Enter the amount you borrowed at the top.");
+              if (!(Number(repayTotal) > 0)) return setPlanError("Enter the total you have to repay.");
               if (!planAmounts && !(Number(firstPayment) > 0)) return setPlanError("Enter the first month’s payment.");
               if (!planNumbers)
                 return setPlanError("That first payment is too big to spread over this term — check the amounts.");
@@ -1451,13 +1455,14 @@ function LenderForm({ initial, onSave, onCancel }) {
                 return setPlanError("The monthly amounts must add up to the total to repay — adjust them or spread evenly again.");
               onSave({
                 ...common,
+                totalAmount: Number(repayTotal),
                 type: "fixed",
                 annualRate: 0,
                 minPayment: planNumbers[0],
                 protectFromGrowth: false,
                 termMonths: termMonthsValue,
                 termStart: termStart || null,
-                repaymentPlan: { received: Number(received), amounts: planNumbers },
+                repaymentPlan: { received: Number(amount), amounts: planNumbers },
               });
               return;
             }
