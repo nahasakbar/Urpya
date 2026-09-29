@@ -431,18 +431,27 @@ function monthsLabel(m) {
 // A loan with a `schedule` (a repayment plan: what's due each month from now
 // on) is paid exactly that each month, and whatever's left once it runs out.
 // It never gets extra money, since paying a plan early doesn't cut its total.
+//
+// Month 1 is the current month. Balances come from computeSchedule, which has
+// already added this month's interest, so month 1 adds no interest of its own;
+// interest accrues from month 2 on. `currentInterest` (this month's interest,
+// already in the balance) is what a protected loan's month-1 floor must cover.
+function month1Interest(l) {
+  return l.currentInterest != null ? l.currentInterest : l.balance * (l.rate / 12);
+}
+
 function simulateStrategy(loans, strategyType, budget, maxMonths = 600) {
   let state = loans.map((l) => ({ ...l }));
   // A "protected" loan's real floor for month 1 is whichever is bigger: its stated
-  // minimum, or the interest it's about to accrue on its starting balance — that's
-  // what actually stops it from growing, not just its (possibly 0) minPayment.
+  // minimum, or this month's interest — that's what actually stops it from growing,
+  // not just its (possibly 0) minPayment.
   // A repayment plan counts at its largest upcoming payment, so a rising plan
   // can't outgrow the budget later on.
   const initialMinSum = state.reduce((s, l) => {
     const floor = l.schedule
       ? Math.min(l.balance, l.schedule.length > 0 ? Math.max(...l.schedule) : l.balance)
       : l.protectFromGrowth
-      ? Math.max(l.minPayment || 0, l.balance * (l.rate / 12))
+      ? Math.max(l.minPayment || 0, month1Interest(l))
       : l.minPayment || 0;
     return s + floor;
   }, 0);
@@ -460,6 +469,11 @@ function simulateStrategy(loans, strategyType, budget, maxMonths = 600) {
     const interestThisMonth = {};
     state.forEach((l) => {
       if (l.balance > 0.5) {
+        if (month === 1) {
+          // Already in the balance — only needed for a protected loan's floor.
+          interestThisMonth[l.id] = month1Interest(l);
+          return;
+        }
         const interest = l.balance * (l.rate / 12);
         interestThisMonth[l.id] = interest;
         l.balance += interest;
@@ -555,7 +569,8 @@ function simulateStatusQuo(loans, maxMonths = 600) {
     let m = 0;
     while (bal > 0.5 && m < maxMonths) {
       m++;
-      const interest = bal * monthlyRate;
+      // Month 1 is the current month, whose interest is already in the balance.
+      const interest = m === 1 ? 0 : bal * monthlyRate;
       bal += interest;
       totalInterest += interest;
       bal -= Math.min(payment, bal);
@@ -2638,6 +2653,7 @@ export default function FamilyLedger() {
         currentPayment: getCurrentPayment(l, entries),
         protectFromGrowth: l.type !== "fixed" && !!l.protectFromGrowth,
         schedule,
+        currentInterest: rows.length > 0 ? rows[rows.length - 1].interest : 0,
       };
     })
     .filter((l) => l.balance > 0.5);

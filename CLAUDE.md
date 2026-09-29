@@ -43,9 +43,9 @@ The Strategy tab's monthly budget can be built from parts in `strategy.budgetPar
 - Debt progress bars are clamped to between 0 and 1. When interest grows a balance past the amount borrowed, "paid" goes negative, and a negative CSS width used to draw the bar as full.
 - The Income tab opens with a combined summary: usual profit, money in and out, capital earned back overall, profit so far, this month, and the amount going to debts.
 
-## Known issue (not yet fixed)
+## Strategy month 1 = the current month
 
-`computeSchedule` already adds the current month's interest to the balance, and `simulateStrategy`, `simulateStatusQuo` and `budgetForTarget` then add another month's interest in their month 1, which is labelled as the current month. So Strategy amounts, and the total interest, run about one month of interest high. Fixing this changes every plan's numbers, so it needs the owner's go-ahead and a careful before/after check.
+`computeSchedule` already adds the current month's interest to each balance, so `simulateStrategy` and `simulateStatusQuo` add no interest in their month 1 ("Pay this for <current month>"). Interest accrues from month 2. The app passes `currentInterest` (this month's interest) so a protected loan's month-1 floor still covers it. This was fixed on 2026-09-29, when the old code added a second month's interest. It was verified by showing that the new result from today's balance equals the old result from last month's balance, with the same payments and payoff months and interest lower by exactly one month. On the family's data this changed the plan from 3y8m to 3y7m and total interest by about ₹53k, and this month's payments didn't change.
 
 ## Testing without touching live data
 
