@@ -367,13 +367,21 @@ const styles = `
     flex-direction: column;
     overflow: hidden;
   }
-  /* iOS 26+ Home Screen bug: in standalone mode top:0/bottom:0, 100% and
-     100dvh all come up short by the status-bar height, leaving a strip
-     below the tab bar. 100lvh is the one unit that reports the full screen. */
+  /* iOS 26+ Home Screen bug: in standalone mode the viewport comes up short
+     by the status-bar height, so top:0/bottom:0, 100% and 100dvh all stop
+     early, and a position:fixed shell is only drawn down to that false edge
+     even when sized taller. 100lvh is the one unit that measures the full
+     screen, and the shell must be in normal flow so the document itself is
+     that tall and iOS draws all the way down. Page-level bounce is turned
+     off so dragging the header or tab bar doesn't rubber-band the app. */
   @media (display-mode: standalone) {
-    .fl-shell { bottom: auto; height: 100lvh; }
+    html, body { overscroll-behavior: none; }
+    .fl-shell { position: relative; bottom: auto; height: 100lvh; }
+    .fl-bottomnav { position: absolute; }
   }
-  html.fl-standalone .fl-shell { bottom: auto; height: 100lvh; }
+  html.fl-standalone, html.fl-standalone body { overscroll-behavior: none; }
+  html.fl-standalone .fl-shell { position: relative; bottom: auto; height: 100lvh; }
+  html.fl-standalone .fl-bottomnav { position: absolute; }
   .fl-shell * { box-sizing: border-box; }
   .fl-serif { font-family: 'Fraunces', Georgia, "Times New Roman", serif; }
   .fl-mono { font-family: ui-monospace, Menlo, Consolas, "Courier New", monospace; }
