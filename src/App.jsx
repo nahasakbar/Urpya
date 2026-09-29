@@ -11,6 +11,7 @@ import {
   Pencil,
   Check,
   Target,
+  TrendingUp,
   AlertCircle,
 } from "lucide-react";
 import { supabase, LEDGER_ROW_ID } from "./supabaseClient.js";
@@ -80,8 +81,19 @@ const CATEGORIES = [
   { id: "other", label: "Other" },
 ];
 
-function categoryLabel(id) {
-  const c = CATEGORIES.find((c) => c.id === id);
+// Same idea for income sources (see computeIncome).
+const INCOME_CATEGORIES = [
+  { id: "business", label: "Business" },
+  { id: "shop", label: "Shop" },
+  { id: "real-estate", label: "Real estate" },
+  { id: "rental", label: "Rental" },
+  { id: "farm", label: "Farm" },
+  { id: "vehicle", label: "Vehicle hire" },
+  { id: "other", label: "Other" },
+];
+
+function categoryLabel(id, list = CATEGORIES) {
+  const c = list.find((c) => c.id === id);
   return c ? c.label : null;
 }
 
@@ -296,6 +308,53 @@ function planYearlyRate(received, amounts) {
     else hi = mid;
   }
   return ((lo + hi) / 2) * 12;
+}
+
+// ---- Income sources ----
+// A business, property, farm etc. that brings money in. Saved in data.incomes
+// as { id, name, category, capital, startMonth, usualIncome, usualExpenses },
+// with actual figures in data.incomeRecords[id]["YYYY-MM"] = { income,
+// expenses }. Entirely separate from the debts: nothing here feeds into any
+// balance or the Strategy plan.
+
+// Month-by-month figures from the start month to now. Only recorded months
+// count toward the totals — a month nobody has recorded yet counts as nothing,
+// not as the usual figures.
+function computeIncome(source, records, asOfKey) {
+  const start = source.startMonth || asOfKey;
+  const span = Math.max(monthsBetween(start, asOfKey) + 1, 0);
+  const rows = [];
+  let totalIncome = 0;
+  let totalExpenses = 0;
+  for (let i = 0; i < span; i++) {
+    const key = monthKeyAdd(start, i);
+    const rec = records ? records[key] : null;
+    const income = rec ? Number(rec.income) || 0 : 0;
+    const expenses = rec ? Number(rec.expenses) || 0 : 0;
+    totalIncome += income;
+    totalExpenses += expenses;
+    rows.push({ key, recorded: !!rec, income, expenses, profit: income - expenses });
+  }
+  const totalProfit = totalIncome - totalExpenses;
+  const capital = Number(source.capital) || 0;
+  const usualProfit = (Number(source.usualIncome) || 0) - (Number(source.usualExpenses) || 0);
+  const stillToEarnBack = Math.max(capital - totalProfit, 0);
+  // Months until the capital is earned back if the usual profit keeps coming
+  // in: 0 once it has been (or there's no capital), null if the usual figures
+  // don't make a profit.
+  const monthsToPayback =
+    capital > 0 && stillToEarnBack > 0.5 ? (usualProfit > 0 ? Math.ceil(stillToEarnBack / usualProfit) : null) : 0;
+  return {
+    rows,
+    totalIncome,
+    totalExpenses,
+    totalProfit,
+    capital,
+    usualProfit,
+    recoveredPct: capital > 0 ? Math.min(Math.max(totalProfit, 0) / capital, 1) : 0,
+    stillToEarnBack,
+    monthsToPayback,
+  };
 }
 
 function monthsLabel(m) {
@@ -1649,6 +1708,168 @@ function StrategyBudgetForm({ initialBudget, onSave, onCancel }) {
   );
 }
 
+// Full-screen page that slides up over the app, with its own header and close button.
+function Sheet({ title, onClose, children }) {
+  return (
+    <div className="fl-sheet" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="fl-grain fl-grain-paper"></div>
+      <div className="fl-sheet-head fl-leather fl-stitch-bottom">
+        <div className="fl-grain fl-grain-leather"></div>
+        <h2 className="fl-title fl-serif fl-z1">{title}</h2>
+        <button className="fl-sheet-close fl-z1" onClick={onClose} aria-label="Close">
+          <X size={20} />
+        </button>
+      </div>
+      <div className="fl-sheet-body">{children}</div>
+    </div>
+  );
+}
+
+function IncomeForm({ initial, onSave, onCancel, inSheet }) {
+  const [name, setName] = useState(initial ? initial.name : "");
+  const [category, setCategory] = useState(initial && initial.category ? initial.category : null);
+  const [capital, setCapital] = useState(initial ? String(initial.capital || 0) : "");
+  const [usualIncome, setUsualIncome] = useState(initial ? String(initial.usualIncome || 0) : "");
+  const [usualExpenses, setUsualExpenses] = useState(initial ? String(initial.usualExpenses || 0) : "");
+  const [startMonth, setStartMonth] = useState(initial && initial.startMonth ? initial.startMonth : currentMonthKey());
+  const cap = Number(capital) || 0;
+  const usualProfit = (Number(usualIncome) || 0) - (Number(usualExpenses) || 0);
+
+  return (
+    <div className="fl-panel">
+      {!inSheet && <p className="fl-panel-title fl-serif">{initial ? "Edit income source" : "Add an income source"}</p>}
+
+      <div className="fl-field">
+        <label>Name</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Kochi shop, Aluva flat" />
+      </div>
+
+      <div className="fl-field">
+        <label>Type — optional</label>
+        <div className="fl-tag-picker">
+          {INCOME_CATEGORIES.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              className={"fl-tag-option" + (category === c.id ? " selected" : "")}
+              aria-pressed={category === c.id}
+              onClick={() => setCategory(category === c.id ? null : c.id)}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="fl-field">
+        <label>Capital put in (₹) — leave 0 if none</label>
+        <input type="number" inputMode="decimal" value={capital} onChange={(e) => setCapital(e.target.value)} placeholder="0" />
+      </div>
+
+      <div className="fl-field">
+        <label>Usual monthly income (₹)</label>
+        <input
+          type="number"
+          inputMode="decimal"
+          value={usualIncome}
+          onChange={(e) => setUsualIncome(e.target.value)}
+          placeholder="0"
+        />
+      </div>
+
+      <div className="fl-field">
+        <label>Usual monthly expenses (₹)</label>
+        <input
+          type="number"
+          inputMode="decimal"
+          value={usualExpenses}
+          onChange={(e) => setUsualExpenses(e.target.value)}
+          placeholder="0"
+        />
+        {(Number(usualIncome) > 0 || Number(usualExpenses) > 0) && (
+          <div className="fl-plan-preview">
+            {usualProfit >= 0 ? `Usual profit ${fmt(usualProfit)} a month` : `Usually a loss of ${fmt(-usualProfit)} a month`}
+            {cap > 0 && usualProfit > 0 ? ` — earns back the capital in about ${monthsLabel(Math.ceil(cap / usualProfit))}.` : "."}
+          </div>
+        )}
+      </div>
+
+      <div className="fl-field">
+        <label>Started (or started tracking) from</label>
+        <input type="month" value={startMonth} onChange={(e) => setStartMonth(e.target.value)} />
+      </div>
+
+      <div className="fl-form-actions">
+        <button className="fl-btn secondary" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          className="fl-btn"
+          onClick={() => {
+            if (!name.trim()) return;
+            onSave({
+              name: name.trim(),
+              category,
+              capital: cap,
+              usualIncome: Number(usualIncome) || 0,
+              usualExpenses: Number(usualExpenses) || 0,
+              startMonth: startMonth || currentMonthKey(),
+            });
+          }}
+        >
+          Save
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function IncomeMonthForm({ monthKey, onMonthKeyChange, defaults, isExisting, onSave, onCancel, title }) {
+  const [income, setIncome] = useState(String(defaults.income || 0));
+  const [expenses, setExpenses] = useState(String(defaults.expenses || 0));
+  const profit = (Number(income) || 0) - (Number(expenses) || 0);
+
+  return (
+    <div className="fl-panel">
+      <p className="fl-panel-title fl-serif">{title}</p>
+
+      <div className="fl-field">
+        <label>Month</label>
+        <input type="month" value={monthKey} onChange={(e) => onMonthKeyChange(e.target.value)} />
+      </div>
+      {isExisting && (
+        <p className="fl-card-sub" style={{ marginTop: -6, marginBottom: 10 }}>
+          This month already has figures recorded — saving will update them.
+        </p>
+      )}
+
+      <div className="fl-field">
+        <label>Income (₹)</label>
+        <input type="number" inputMode="decimal" value={income} onChange={(e) => setIncome(e.target.value)} />
+      </div>
+      <div className="fl-field">
+        <label>Expenses (₹)</label>
+        <input type="number" inputMode="decimal" value={expenses} onChange={(e) => setExpenses(e.target.value)} />
+        <p className="fl-card-sub" style={{ marginTop: 6, color: profit < 0 ? "var(--maroon)" : "var(--forest)" }}>
+          {profit < 0 ? `Loss ${fmt(-profit)}` : `Profit ${fmt(profit)}`}
+        </p>
+      </div>
+
+      <div className="fl-form-actions">
+        <button className="fl-btn secondary" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          className="fl-btn"
+          onClick={() => onSave({ income: Number(income) || 0, expenses: Number(expenses) || 0 })}
+        >
+          Save
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function FamilyLedger() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1658,6 +1879,10 @@ export default function FamilyLedger() {
   const [showAddLoan, setShowAddLoan] = useState(false);
   const [editingLoanId, setEditingLoanId] = useState(null);
   const [pendingMonthKey, setPendingMonthKey] = useState(null);
+  const [selectedIncomeId, setSelectedIncomeId] = useState(null);
+  const [showAddIncome, setShowAddIncome] = useState(false);
+  const [editingIncomeId, setEditingIncomeId] = useState(null);
+  const [pendingIncomeMonth, setPendingIncomeMonth] = useState(null);
   const [newPerson, setNewPerson] = useState("");
   const [editingBudget, setEditingBudget] = useState(false);
   const [toast, setToast] = useState("");
@@ -1911,8 +2136,60 @@ export default function FamilyLedger() {
   }
 
   const selectedLoan = lenders.find((l) => l.id === selectedLoanId) || null;
-  // The header's + (add a debt) shows on the screens that list debts.
-  const canAddFromHeader = view === "dashboard" || view === "loans";
+
+  // Income sources: kept apart from the debts, and never part of their maths.
+  const incomes = data.incomes || [];
+  const incomeRecords = data.incomeRecords || {};
+  const incomeSummaries = incomes.map((s) => ({ ...s, stats: computeIncome(s, incomeRecords[s.id], asOfKey) }));
+  const selectedIncome = incomeSummaries.find((s) => s.id === selectedIncomeId) || null;
+  const activeIncomes = incomeSummaries.filter((s) => (s.startMonth || asOfKey) <= asOfKey);
+  const recordedThisMonth = activeIncomes.filter((s) => incomeRecords[s.id] && incomeRecords[s.id][asOfKey]);
+  const profitThisMonth = recordedThisMonth.reduce((sum, s) => {
+    const r = incomeRecords[s.id][asOfKey];
+    return sum + ((Number(r.income) || 0) - (Number(r.expenses) || 0));
+  }, 0);
+  const usualProfitTotal = activeIncomes.reduce((sum, s) => sum + s.stats.usualProfit, 0);
+
+  function addIncome(fields) {
+    persist({ ...data, incomes: [...incomes, { id: uid("inc"), ...fields }] });
+    setShowAddIncome(false);
+  }
+
+  function updateIncome(id, fields) {
+    persist({ ...data, incomes: incomes.map((s) => (s.id === id ? { ...s, ...fields } : s)) });
+    setEditingIncomeId(null);
+  }
+
+  function deleteIncome(id) {
+    const nextRecords = { ...incomeRecords };
+    delete nextRecords[id];
+    persist({ ...data, incomes: incomes.filter((s) => s.id !== id), incomeRecords: nextRecords });
+    if (selectedIncomeId === id) {
+      setSelectedIncomeId(null);
+      setView("income");
+    }
+  }
+
+  function saveIncomeMonth(id, monthKey, figures) {
+    const existing = incomeRecords[id] || {};
+    persist({ ...data, incomeRecords: { ...incomeRecords, [id]: { ...existing, [monthKey]: figures } } });
+    setPendingIncomeMonth(null);
+  }
+
+  function deleteIncomeMonth(id, monthKey) {
+    const existing = { ...(incomeRecords[id] || {}) };
+    delete existing[monthKey];
+    persist({ ...data, incomeRecords: { ...incomeRecords, [id]: existing } });
+  }
+
+  function openIncome(id) {
+    setSelectedIncomeId(id);
+    setPendingIncomeMonth(null);
+    setView("incomeDetail");
+  }
+
+  // The header's + adds to whichever list is showing: Debts or Income.
+  const canAddFromHeader = view === "loans" || view === "income";
 
   return (
     <div className="fl-shell">
@@ -1938,7 +2215,11 @@ export default function FamilyLedger() {
       <div className="fl-topbar fl-leather fl-stitch-bottom">
         <div className="fl-grain fl-grain-leather"></div>
         {canAddFromHeader ? (
-          <button className="fl-topbar-add" onClick={() => setShowAddLoan(true)} aria-label="Add a debt">
+          <button
+            className="fl-topbar-add"
+            onClick={() => (view === "income" ? setShowAddIncome(true) : setShowAddLoan(true))}
+            aria-label={view === "income" ? "Add an income source" : "Add a debt"}
+          >
             <Plus size={20} strokeWidth={2.5} />
           </button>
         ) : (
@@ -1954,6 +2235,13 @@ export default function FamilyLedger() {
                 <ChevronLeft size={16} /> Debts
               </button>
               <h1 className="fl-title fl-serif">{selectedLoan.name}</h1>
+            </>
+          ) : view === "incomeDetail" && selectedIncome ? (
+            <>
+              <button className="fl-back-row" onClick={() => setView("income")}>
+                <ChevronLeft size={16} /> Income
+              </button>
+              <h1 className="fl-title fl-serif">{selectedIncome.name}</h1>
             </>
           ) : (
             <>
@@ -1980,8 +2268,30 @@ export default function FamilyLedger() {
               </p>
             </div>
 
+            {activeIncomes.length > 0 && (
+              <div className="fl-summary" style={{ cursor: "pointer" }} onClick={() => setView("income")}>
+                <p className="fl-summary-label">Income · {monthKeyLabel(asOfKey)}</p>
+                {recordedThisMonth.length > 0 ? (
+                  <p
+                    className="fl-summary-value fl-mono"
+                    style={{ fontSize: 22, color: profitThisMonth < 0 ? "var(--maroon)" : "var(--forest)" }}
+                  >
+                    {profitThisMonth < 0 ? `${fmt(-profitThisMonth)} loss` : `${fmt(profitThisMonth)} profit`}
+                  </p>
+                ) : (
+                  <p className="fl-list-row-name" style={{ margin: "2px 0 0" }}>Nothing recorded yet this month</p>
+                )}
+                <p className="fl-card-sub" style={{ marginTop: 6 }}>
+                  {recordedThisMonth.length} of {activeIncomes.length} recorded ·{" "}
+                  {usualProfitTotal >= 0
+                    ? `usually ${fmt(usualProfitTotal)} profit a month`
+                    : `usually ${fmt(-usualProfitTotal)} loss a month`}
+                </p>
+              </div>
+            )}
+
             {lenderSummaries.length === 0 && (
-              <div className="fl-empty">Nothing added yet. Tap + at the top to add a debt.</div>
+              <div className="fl-empty">Nothing added yet. Add one from the Debts tab.</div>
             )}
 
             {lenderSummaries.map((l) => {
@@ -2098,6 +2408,192 @@ export default function FamilyLedger() {
           </>
         )}
 
+        {view === "income" && (
+          <>
+            <p className="fl-section-title">Your income sources</p>
+            {incomeSummaries.map((s) =>
+              editingIncomeId === s.id ? (
+                <IncomeForm
+                  key={s.id}
+                  initial={s}
+                  onCancel={() => setEditingIncomeId(null)}
+                  onSave={(fields) => updateIncome(s.id, fields)}
+                />
+              ) : (
+                <div className="fl-list-row" key={s.id}>
+                  <div className="fl-list-row-main" onClick={() => openIncome(s.id)}>
+                    <div className="fl-list-row-name">{s.name}</div>
+                    <div className="fl-list-row-sub fl-mono">
+                      {s.stats.capital > 0 ? `${fmt(s.stats.capital)} capital · ` : ""}
+                      {s.stats.usualProfit >= 0
+                        ? `usually ${fmt(s.stats.usualProfit)}/mo profit`
+                        : `usually ${fmt(-s.stats.usualProfit)}/mo loss`}
+                    </div>
+                    {categoryLabel(s.category, INCOME_CATEGORIES) && (
+                      <div className="fl-chip-row" style={{ marginTop: 5 }}>
+                        <span className="fl-chip chip-tag">{categoryLabel(s.category, INCOME_CATEGORIES)}</span>
+                      </div>
+                    )}
+                  </div>
+                  <button className="fl-icon-btn" onClick={() => setEditingIncomeId(s.id)} aria-label="Edit income source">
+                    <Pencil size={16} />
+                  </button>
+                  <ConfirmButton label="delete income source" onConfirm={() => deleteIncome(s.id)} />
+                  <button className="fl-icon-btn" onClick={() => openIncome(s.id)} aria-label="Open income source">
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              )
+            )}
+            {incomes.length === 0 && (
+              <div className="fl-empty">
+                Nothing added yet. Tap + at the top to add a business, property or other income source.
+              </div>
+            )}
+          </>
+        )}
+
+        {view === "incomeDetail" && selectedIncome && (
+          <>
+            {editingIncomeId === selectedIncome.id ? (
+              <IncomeForm
+                initial={selectedIncome}
+                onCancel={() => setEditingIncomeId(null)}
+                onSave={(fields) => updateIncome(selectedIncome.id, fields)}
+              />
+            ) : (
+              (() => {
+                const s = selectedIncome;
+                const st = s.stats;
+                const records = incomeRecords[s.id] || {};
+                const suggestedMonth = getSuggestedMonth(s, records, asOfKey);
+                const toGo =
+                  st.monthsToPayback > 0
+                    ? ` · about ${monthsLabel(st.monthsToPayback)} to go at the usual profit`
+                    : st.monthsToPayback === null
+                    ? " · the usual figures don’t make a profit yet"
+                    : "";
+                const profitColor = (v) => (v < 0 ? "var(--maroon)" : "var(--forest)");
+
+                return (
+                  <>
+                    <div className="fl-detail-head">
+                      <div className="fl-card-row">
+                        <span className="fl-card-sub">Capital put in</span>
+                        <button className="fl-icon-btn" onClick={() => setEditingIncomeId(s.id)} aria-label="Edit income source details">
+                          <Pencil size={14} />
+                        </button>
+                      </div>
+                      <p className="fl-stat-value fl-mono" style={{ fontSize: 20 }}>{fmt(st.capital)}</p>
+                      <p className="fl-card-sub" style={{ marginTop: 4 }}>
+                        Started {monthKeyShort(s.startMonth || asOfKey)} · usually {fmt(s.usualIncome)} in,{" "}
+                        {fmt(s.usualExpenses)} out
+                      </p>
+                      {categoryLabel(s.category, INCOME_CATEGORIES) && (
+                        <div className="fl-chip-row" style={{ marginTop: 6 }}>
+                          <span className="fl-chip chip-tag">{categoryLabel(s.category, INCOME_CATEGORIES)}</span>
+                        </div>
+                      )}
+                      {st.capital > 0 && (
+                        <>
+                          <div className="fl-progress-track">
+                            <div className="fl-progress-fill" style={{ width: (st.recoveredPct * 100).toFixed(1) + "%" }} />
+                          </div>
+                          <p className="fl-card-sub" style={{ marginTop: 6 }}>
+                            {st.totalProfit >= st.capital
+                              ? `Capital fully earned back ✓${
+                                  st.totalProfit - st.capital > 0.5 ? ` — ${fmt(st.totalProfit - st.capital)} beyond it` : ""
+                                }`
+                              : st.totalProfit > 0
+                              ? `${fmt(st.totalProfit)} of ${fmt(st.capital)} earned back (${Math.floor(st.recoveredPct * 100)}%)${toGo}`
+                              : `Nothing earned back yet${toGo}`}
+                          </p>
+                        </>
+                      )}
+
+                      <div className="fl-detail-grid">
+                        <div>
+                          <p className="fl-stat-label">{st.totalProfit < 0 ? "Loss so far" : "Profit so far"}</p>
+                          <p className="fl-stat-value fl-mono" style={{ color: profitColor(st.totalProfit) }}>
+                            {fmt(Math.abs(st.totalProfit))}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="fl-stat-label">{st.usualProfit < 0 ? "Usual monthly loss" : "Usual monthly profit"}</p>
+                          <p className="fl-stat-value fl-mono">{fmt(Math.abs(st.usualProfit))}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <p className="fl-section-title">Monthly figures</p>
+
+                    {st.rows.map((row) =>
+                      pendingIncomeMonth === row.key ? (
+                        <IncomeMonthForm
+                          key={row.key}
+                          monthKey={row.key}
+                          onMonthKeyChange={setPendingIncomeMonth}
+                          defaults={row.recorded ? row : { income: s.usualIncome, expenses: s.usualExpenses }}
+                          isExisting={row.recorded}
+                          title={(row.recorded ? "Edit " : "Record ") + monthKeyLabel(row.key)}
+                          onCancel={() => setPendingIncomeMonth(null)}
+                          onSave={(figures) => saveIncomeMonth(s.id, row.key, figures)}
+                        />
+                      ) : (
+                        <div className="fl-month-row" key={row.key}>
+                          <div className="fl-month-top" onClick={() => setPendingIncomeMonth(row.key)}>
+                            <span className="fl-month-name">{monthKeyShort(row.key)}</span>
+                            <span className="fl-month-balance fl-mono" style={{ color: row.recorded ? profitColor(row.profit) : undefined }}>
+                              {row.recorded ? (row.profit < 0 ? "−" : "") + fmt(Math.abs(row.profit)) : "—"}
+                            </span>
+                          </div>
+                          <div className="fl-month-breakdown" onClick={() => setPendingIncomeMonth(row.key)}>
+                            {row.recorded
+                              ? `Income ${fmt(row.income)} · Expenses ${fmt(row.expenses)}`
+                              : "Not recorded yet"}
+                          </div>
+                          {row.recorded && (
+                            <div style={{ marginTop: 6 }}>
+                              <ConfirmButton
+                                label={"delete " + monthKeyShort(row.key) + " figures"}
+                                onConfirm={() => deleteIncomeMonth(s.id, row.key)}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )
+                    )}
+
+                    {st.rows.length === 0 && (
+                      <p className="fl-card-sub" style={{ marginBottom: 8 }}>
+                        Starts {monthKeyLabel(s.startMonth)} — nothing to record yet.
+                      </p>
+                    )}
+
+                    {pendingIncomeMonth !== null && !st.rows.some((r) => r.key === pendingIncomeMonth) && (
+                      <IncomeMonthForm
+                        monthKey={pendingIncomeMonth}
+                        onMonthKeyChange={setPendingIncomeMonth}
+                        defaults={{ income: s.usualIncome, expenses: s.usualExpenses }}
+                        isExisting={!!records[pendingIncomeMonth]}
+                        title={"Record " + monthKeyLabel(pendingIncomeMonth)}
+                        onCancel={() => setPendingIncomeMonth(null)}
+                        onSave={(figures) => saveIncomeMonth(s.id, pendingIncomeMonth, figures)}
+                      />
+                    )}
+
+                    {pendingIncomeMonth === null && st.rows.length > 0 && (
+                      <button className="fl-add-row" onClick={() => setPendingIncomeMonth(suggestedMonth)}>
+                        <Plus size={16} /> Record a month
+                      </button>
+                    )}
+                  </>
+                );
+              })()
+            )}
+          </>
+        )}
+
         {view === "people" && (
           <>
             <p className="fl-section-title">Contributors</p>
@@ -2154,6 +2650,16 @@ export default function FamilyLedger() {
                 </div>
                 <p className="fl-summary-value fl-mono">{fmt(strategy.budget)}</p>
               </div>
+            )}
+
+            {activeIncomes.length > 0 && (
+              <p className="fl-card-sub" style={{ marginTop: -6, marginBottom: 12 }}>
+                {usualProfitTotal >= 0
+                  ? `Your income sources usually make ${fmt(usualProfitTotal)} profit a month.`
+                  : `Your income sources usually run at a ${fmt(-usualProfitTotal)} loss a month.`}{" "}
+                It isn’t added to this budget automatically — edit the budget if you’d like to put some of it toward
+                debts.
+              </p>
             )}
 
             <p className="fl-section-title">Strategy</p>
@@ -2474,19 +2980,15 @@ export default function FamilyLedger() {
       {toast && <div className="fl-toast">{toast}</div>}
 
       {showAddLoan && (
-        <div className="fl-sheet" role="dialog" aria-modal="true" aria-label="Add a new debt">
-          <div className="fl-grain fl-grain-paper"></div>
-          <div className="fl-sheet-head fl-leather fl-stitch-bottom">
-            <div className="fl-grain fl-grain-leather"></div>
-            <h2 className="fl-title fl-serif fl-z1">Add a new debt</h2>
-            <button className="fl-sheet-close fl-z1" onClick={() => setShowAddLoan(false)} aria-label="Close">
-              <X size={20} />
-            </button>
-          </div>
-          <div className="fl-sheet-body">
-            <LenderForm inSheet onCancel={() => setShowAddLoan(false)} onSave={addLoan} />
-          </div>
-        </div>
+        <Sheet title="Add a new debt" onClose={() => setShowAddLoan(false)}>
+          <LenderForm inSheet onCancel={() => setShowAddLoan(false)} onSave={addLoan} />
+        </Sheet>
+      )}
+
+      {showAddIncome && (
+        <Sheet title="Add an income source" onClose={() => setShowAddIncome(false)}>
+          <IncomeForm inSheet onCancel={() => setShowAddIncome(false)} onSave={addIncome} />
+        </Sheet>
       )}
 
       <div className="fl-bottomnav fl-leather fl-stitch-top">
@@ -2510,6 +3012,14 @@ export default function FamilyLedger() {
             <div className="fl-ribbon"><div className="fl-ribbon-grain"></div></div>
             <Landmark size={16} />
             Debts
+          </button>
+          <button
+            className={"fl-navbtn " + (view === "income" || view === "incomeDetail" ? "active" : "")}
+            onClick={() => setView("income")}
+          >
+            <div className="fl-ribbon"><div className="fl-ribbon-grain"></div></div>
+            <TrendingUp size={16} />
+            Income
           </button>
           <button
             className={"fl-navbtn " + (view === "strategy" ? "active" : "")}
