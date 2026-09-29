@@ -66,6 +66,25 @@ function ordinal(n) {
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
 }
 
+// What kind of borrowing a loan is, shown as a tag. Purely a label — it never
+// affects any calculation. Stored as `category`; the separate `type` field
+// ("interest" / "fixed") is what controls interest.
+const CATEGORIES = [
+  { id: "loan", label: "Loan" },
+  { id: "mortgage", label: "Mortgage" },
+  { id: "car", label: "Car" },
+  { id: "gold", label: "Gold loan" },
+  { id: "overdraft", label: "Overdraft" },
+  { id: "credit-card", label: "Credit card" },
+  { id: "family", label: "Family & friends" },
+  { id: "other", label: "Other" },
+];
+
+function categoryLabel(id) {
+  const c = CATEGORIES.find((c) => c.id === id);
+  return c ? c.label : null;
+}
+
 function defaultData() {
   const asOf = currentMonthKey();
   return {
@@ -604,6 +623,79 @@ const styles = `
     color: var(--ink);
     border-color: rgba(27,42,74,0.24);
   }
+  /* Loan-type tag (Mortgage, Car, ...): brass, so it never reads as a status colour. */
+  .fl-chip.chip-tag {
+    background: rgba(176,138,62,0.14);
+    color: #7A5A22;
+    border-color: rgba(176,138,62,0.42);
+  }
+  .fl-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .fl-tag-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .fl-tag-option {
+    padding: 6px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--line);
+    background: none;
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .fl-tag-option.selected {
+    background: linear-gradient(160deg, var(--leather-hi), var(--leather));
+    border-color: var(--leather-dk);
+    color: #F3E7D0;
+  }
+
+  .fl-switch-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 4px;
+  }
+  .fl-switch-label { font-size: 14px; color: var(--ink); }
+  .fl-switch {
+    position: relative;
+    flex-shrink: 0;
+    width: 46px;
+    height: 28px;
+    padding: 0;
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    background: rgba(107,100,85,0.18);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .fl-switch.on {
+    background: linear-gradient(160deg, var(--leather-hi), var(--leather));
+    border-color: var(--leather-dk);
+  }
+  .fl-switch-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #fff, #E9E1CC);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.35);
+    transition: transform 0.15s;
+  }
+  .fl-switch.on .fl-switch-knob {
+    transform: translateX(18px);
+    background: radial-gradient(circle at 35% 30%, var(--brass-light), var(--brass) 60%, #7A5A22 100%);
+  }
 
   .fl-section-title {
     font-size: 13px;
@@ -684,6 +776,11 @@ const styles = `
   .fl-field input:focus {
     outline: 2px solid var(--brass);
     outline-offset: 1px;
+  }
+  .fl-field input[type="checkbox"] {
+    width: auto;
+    flex-shrink: 0;
+    margin: 0;
   }
   .fl-form-actions {
     display: flex;
@@ -807,9 +904,11 @@ function ConfirmButton({ onConfirm, label }) {
 
 function LenderForm({ initial, onSave, onCancel }) {
   const [name, setName] = useState(initial ? initial.name : "");
-  const [type, setType] = useState(initial ? initial.type || "interest" : "interest");
+  const [category, setCategory] = useState(initial && initial.category ? initial.category : null);
+  // The interest switch is the loan's `type`: on = "interest", off = "fixed".
+  const [type, setType] = useState(initial ? initial.type || "interest" : "fixed");
   const [amount, setAmount] = useState(initial ? String(initial.totalAmount) : "");
-  const [rate, setRate] = useState(initial ? String((initial.annualRate || 0) * 100) : "0");
+  const [rate, setRate] = useState(initial ? String((initial.annualRate || 0) * 100) : "");
   const [minPayment, setMinPayment] = useState(initial ? String(initial.minPayment || 0) : "0");
   const [protectFromGrowth, setProtectFromGrowth] = useState(initial ? !!initial.protectFromGrowth : false);
   const [dueDay, setDueDay] = useState(initial && initial.dueDay ? String(initial.dueDay) : "");
@@ -817,7 +916,7 @@ function LenderForm({ initial, onSave, onCancel }) {
 
   return (
     <div className="fl-panel">
-      <p className="fl-panel-title fl-serif">{initial ? "Edit loan" : "Add a new loan"}</p>
+      <p className="fl-panel-title fl-serif">{initial ? "Edit debt" : "Add a new debt"}</p>
 
       <div className="fl-field">
         <label>Lender name</label>
@@ -825,32 +924,7 @@ function LenderForm({ initial, onSave, onCancel }) {
       </div>
 
       <div className="fl-field">
-        <label>Type</label>
-        <div className="fl-form-actions" style={{ marginTop: 0, marginBottom: 6 }}>
-          <button
-            type="button"
-            className={"fl-btn" + (type === "interest" ? "" : " secondary")}
-            onClick={() => setType("interest")}
-          >
-            Interest-bearing
-          </button>
-          <button
-            type="button"
-            className={"fl-btn" + (type === "fixed" ? "" : " secondary")}
-            onClick={() => setType("fixed")}
-          >
-            Fixed amount
-          </button>
-        </div>
-        <p className="fl-card-sub">
-          {type === "interest"
-            ? "Interest is added to the balance every month, even a month you don't pay."
-            : "No interest — the balance only ever changes when you record a payment."}
-        </p>
-      </div>
-
-      <div className="fl-field">
-        <label>Total loan amount (₹)</label>
+        <label>Total amount borrowed (₹)</label>
         <input
           type="number"
           inputMode="decimal"
@@ -860,21 +934,61 @@ function LenderForm({ initial, onSave, onCancel }) {
         />
       </div>
 
+      <div className="fl-field">
+        <label>Type — optional</label>
+        <div className="fl-tag-picker">
+          {CATEGORIES.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              className={"fl-tag-option" + (category === c.id ? " selected" : "")}
+              aria-pressed={category === c.id}
+              onClick={() => setCategory(category === c.id ? null : c.id)}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="fl-field">
+        <div className="fl-switch-row">
+          <span className="fl-switch-label">Charges interest</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={type === "interest"}
+            aria-label="Charges interest"
+            className={"fl-switch" + (type === "interest" ? " on" : "")}
+            onClick={() => setType(type === "interest" ? "fixed" : "interest")}
+          >
+            <span className="fl-switch-knob" />
+          </button>
+        </div>
+        <p className="fl-card-sub">
+          {type === "interest"
+            ? "Interest is added to the balance every month, even a month you don't pay."
+            : "No interest — the balance only ever changes when you record a payment."}
+        </p>
+      </div>
+
       {type === "interest" && (
         <div className="fl-field">
-          <label>Annual interest rate (%) — leave 0 if none</label>
+          <label>Annual interest rate (%)</label>
           <input
             type="number"
             inputMode="decimal"
             value={rate}
             onChange={(e) => setRate(e.target.value)}
-            placeholder="0"
+            placeholder="e.g. 9.5"
           />
         </div>
       )}
 
       <div className="fl-field">
-        <label>{type === "fixed" ? "Fixed monthly amount (₹)" : "Minimum monthly payment (₹) — leave 0 if flexible"}</label>
+        <label>
+          {type === "fixed" ? "Monthly payment (₹) — leave 0 if flexible" : "Minimum monthly payment (₹) — leave 0 if flexible"}
+        </label>
         <input
           type="number"
           inputMode="decimal"
@@ -892,10 +1006,10 @@ function LenderForm({ initial, onSave, onCancel }) {
               checked={protectFromGrowth}
               onChange={(e) => setProtectFromGrowth(e.target.checked)}
             />
-            <span>Don’t let this loan grow while it waits its turn</span>
+            <span>Don’t let this debt grow while it waits its turn</span>
           </label>
           <p className="fl-card-sub">
-            In the Strategy plan, this loan will always get at least that month’s interest — recalculated off its
+            In the Strategy plan, this debt will always get at least that month’s interest — recalculated off its
             real balance each month — even on a month the plan would otherwise send it ₹0.
           </p>
         </div>
@@ -930,6 +1044,7 @@ function LenderForm({ initial, onSave, onCancel }) {
             const day = Number(dueDay);
             onSave({
               name: name.trim(),
+              category,
               type,
               totalAmount: Number(amount) || 0,
               annualRate: type === "interest" ? (Number(rate) || 0) / 100 : 0,
@@ -1009,7 +1124,7 @@ function StrategyBudgetForm({ initialBudget, onSave, onCancel }) {
     <div className="fl-panel">
       <p className="fl-panel-title fl-serif">Set your monthly budget</p>
       <div className="fl-field">
-        <label>Total your family can put toward ALL loans combined, each month (₹)</label>
+        <label>Total your family can put toward ALL debts combined, each month (₹)</label>
         <input
           type="number"
           inputMode="decimal"
@@ -1285,7 +1400,7 @@ export default function FamilyLedger() {
           {view === "loanDetail" && selectedLoan ? (
             <>
               <button className="fl-back-row" onClick={() => setView("loans")}>
-                <ChevronLeft size={16} /> Loans
+                <ChevronLeft size={16} /> Debts
               </button>
               <h1 className="fl-title fl-serif">{selectedLoan.name}</h1>
             </>
@@ -1304,7 +1419,7 @@ export default function FamilyLedger() {
         {view === "dashboard" && (
           <>
             <div className="fl-summary">
-              <p className="fl-summary-label">Total remaining across all loans</p>
+              <p className="fl-summary-label">Total remaining across all debts</p>
               <p className="fl-summary-value fl-mono">{fmt(totalRemaining)}</p>
               <div className="fl-progress-track">
                 <div className="fl-progress-fill" style={{ width: (overallPct * 100).toFixed(1) + "%" }} />
@@ -1315,7 +1430,7 @@ export default function FamilyLedger() {
             </div>
 
             {lenderSummaries.length === 0 && (
-              <div className="fl-empty">No loans yet. Add one from the Loans tab.</div>
+              <div className="fl-empty">Nothing added yet. Add one from the Debts tab.</div>
             )}
 
             {lenderSummaries.map((l) => {
@@ -1330,12 +1445,14 @@ export default function FamilyLedger() {
                     <div className="fl-progress-fill" style={{ width: (pct * 100).toFixed(1) + "%" }} />
                   </div>
                   <p className="fl-card-sub">of {fmt(l.totalAmount)} total</p>
-                  {(l.protectFromGrowth ||
+                  {(categoryLabel(l.category) ||
+                    l.protectFromGrowth ||
                     l.isPaidThisMonth ||
                     l.isOverdue ||
                     l.isDueSoon ||
                     l.missedMonths.length > 0) && (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                    <div className="fl-chip-row">
+                      {categoryLabel(l.category) && <span className="fl-chip chip-tag">{categoryLabel(l.category)}</span>}
                       {l.protectFromGrowth && <span className="fl-chip chip-blue">protected</span>}
                       {l.isPaidThisMonth && (
                         <span className="fl-chip chip-green">
@@ -1372,7 +1489,7 @@ export default function FamilyLedger() {
 
         {view === "loans" && (
           <>
-            <p className="fl-section-title">Your loans &amp; creditors</p>
+            <p className="fl-section-title">Your debts &amp; creditors</p>
             {lenders.map((l) =>
               editingLoanId === l.id ? (
                 <LenderForm
@@ -1387,20 +1504,21 @@ export default function FamilyLedger() {
                     <div className="fl-list-row-name">{l.name}</div>
                     <div className="fl-list-row-sub fl-mono">
                       {fmt(l.totalAmount)} ·{" "}
-                      {l.type === "fixed" ? "fixed, no interest" : `${((l.annualRate || 0) * 100).toFixed(2)}% p.a.`}
+                      {l.type === "fixed" ? "no interest" : `${((l.annualRate || 0) * 100).toFixed(2)}% p.a.`}
                       {l.dueDay ? ` · due on the ${ordinal(l.dueDay)}` : ""}
                     </div>
-                    {l.protectFromGrowth && (
-                      <div style={{ marginTop: 5 }}>
-                        <span className="fl-chip chip-blue">protected</span>
+                    {(categoryLabel(l.category) || l.protectFromGrowth) && (
+                      <div className="fl-chip-row" style={{ marginTop: 5 }}>
+                        {categoryLabel(l.category) && <span className="fl-chip chip-tag">{categoryLabel(l.category)}</span>}
+                        {l.protectFromGrowth && <span className="fl-chip chip-blue">protected</span>}
                       </div>
                     )}
                   </div>
-                  <button className="fl-icon-btn" onClick={() => setEditingLoanId(l.id)} aria-label="Edit loan">
+                  <button className="fl-icon-btn" onClick={() => setEditingLoanId(l.id)} aria-label="Edit debt">
                     <Pencil size={16} />
                   </button>
-                  <ConfirmButton label="delete loan" onConfirm={() => deleteLoan(l.id)} />
-                  <button className="fl-icon-btn" onClick={() => openLoan(l.id)} aria-label="Open loan">
+                  <ConfirmButton label="delete debt" onConfirm={() => deleteLoan(l.id)} />
+                  <button className="fl-icon-btn" onClick={() => openLoan(l.id)} aria-label="Open debt">
                     <ChevronRight size={16} />
                   </button>
                 </div>
@@ -1411,7 +1529,7 @@ export default function FamilyLedger() {
               <LenderForm onCancel={() => setShowAddLoan(false)} onSave={addLoan} />
             ) : (
               <button className="fl-add-row" onClick={() => setShowAddLoan(true)}>
-                <Plus size={16} /> Add a loan or creditor
+                <Plus size={16} /> Add a debt or creditor
               </button>
             )}
           </>
@@ -1455,7 +1573,7 @@ export default function FamilyLedger() {
 
         {view === "strategy" && (
           <>
-            <p className="fl-section-title">Monthly budget for all loans</p>
+            <p className="fl-section-title">Monthly budget for all debts</p>
 
             {editingBudget ? (
               <StrategyBudgetForm
@@ -1492,18 +1610,18 @@ export default function FamilyLedger() {
             </div>
             <p className="fl-card-sub" style={{ marginTop: -8, marginBottom: 16 }}>
               {strategy.type === "avalanche"
-                ? "Targets the highest-interest loan first — saves the most money overall."
-                : "Targets the smallest balance first — clears individual loans fastest."}
+                ? "Targets the highest-interest debt first — saves the most money overall."
+                : "Targets the smallest balance first — clears individual debts fastest."}
             </p>
 
             {strategyLoans.length === 0 && (
-              <div className="fl-empty">All loans are paid off, or none are set up yet — nothing to plan.</div>
+              <div className="fl-empty">All debts are paid off, or none are set up yet — nothing to plan.</div>
             )}
 
             {strategyLoans.length > 0 && strategyResult && !strategyResult.feasible && (
               <div className="fl-panel">
                 <p className="fl-card-sub">
-                  Your budget of {fmt(strategy.budget)} doesn’t cover the minimum payments across your loans.
+                  Your budget of {fmt(strategy.budget)} doesn’t cover the minimum payments across your debts.
                   You need at least {fmt(strategyResult.minRequired)}/month before a strategy can be planned.
                 </p>
               </div>
@@ -1545,7 +1663,7 @@ export default function FamilyLedger() {
                   )}
                   {statusQuoResult && statusQuoResult.stalled.length > 0 && (
                     <p className="fl-card-sub" style={{ marginTop: 10 }}>
-                      At least one loan isn’t currently being paid enough to even cover its own interest — it
+                      At least one debt isn’t currently being paid enough to even cover its own interest — it
                       would never be paid off at today’s pace, so this strategy is the meaningful way forward.
                     </p>
                   )}
@@ -1590,8 +1708,8 @@ export default function FamilyLedger() {
             )}
 
             <p className="fl-card-sub" style={{ marginTop: 14 }}>
-              Set each loan’s minimum monthly payment from its edit form on the Loans tab — leave it at 0 for
-              flexible, informal loans, or tick “protect from growing” on a loan that must never be left to pile up
+              Set each debt’s minimum monthly payment from its edit form on the Debts tab — leave it at 0 for
+              flexible, informal ones, or tick “protect from growing” on a debt that must never be left to pile up
               interest while it waits its turn. This isn’t financial advice tailored to your situation; check things
               like tax benefits or prepayment penalties before making big changes.
             </p>
@@ -1619,19 +1737,24 @@ export default function FamilyLedger() {
                   <>
                     <div className="fl-detail-head">
                       <div className="fl-card-row">
-                        <span className="fl-card-sub">Total loan amount</span>
-                        <button className="fl-icon-btn" onClick={() => setEditingLoanId(selectedLoan.id)} aria-label="Edit loan details">
+                        <span className="fl-card-sub">Total amount borrowed</span>
+                        <button className="fl-icon-btn" onClick={() => setEditingLoanId(selectedLoan.id)} aria-label="Edit debt details">
                           <Pencil size={14} />
                         </button>
                       </div>
                       <p className="fl-stat-value fl-mono" style={{ fontSize: 20 }}>{fmt(selectedLoan.totalAmount)}</p>
                       <p className="fl-card-sub" style={{ marginTop: 4 }}>
                         {selectedLoan.type === "fixed"
-                          ? "Fixed amount, no interest"
+                          ? "No interest"
                           : `${((selectedLoan.annualRate || 0) * 100).toFixed(2)}% per annum`}
                         {selectedLoan.dueDay ? ` · due on the ${ordinal(selectedLoan.dueDay)}` : ""}
                         {selectedLoan.protectFromGrowth ? " · protected from growing" : ""}
                       </p>
+                      {categoryLabel(selectedLoan.category) && (
+                        <div className="fl-chip-row" style={{ marginTop: 6 }}>
+                          <span className="fl-chip chip-tag">{categoryLabel(selectedLoan.category)}</span>
+                        </div>
+                      )}
                       {isOverdue && (
                         <p className="fl-overdue">
                           <AlertCircle size={12} /> Overdue for {monthKeyLabel(asOfKey)}
@@ -1753,7 +1876,7 @@ export default function FamilyLedger() {
           >
             <div className="fl-ribbon"><div className="fl-ribbon-grain"></div></div>
             <Landmark size={16} />
-            Loans
+            Debts
           </button>
           <button
             className={"fl-navbtn " + (view === "strategy" ? "active" : "")}
