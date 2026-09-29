@@ -440,7 +440,10 @@ function month1Interest(l) {
   return l.currentInterest != null ? l.currentInterest : l.balance * (l.rate / 12);
 }
 
+// `budget` is a number, or a function giving month m's budget (m = 1 is this
+// month) when part of it follows income that rises over time.
 function simulateStrategy(loans, strategyType, budget, maxMonths = 600) {
+  const budgetFor = typeof budget === "function" ? budget : () => budget;
   let state = loans.map((l) => ({ ...l }));
   // A "protected" loan's real floor for month 1 is whichever is bigger: its stated
   // minimum, or this month's interest — that's what actually stops it from growing,
@@ -455,7 +458,7 @@ function simulateStrategy(loans, strategyType, budget, maxMonths = 600) {
       : l.minPayment || 0;
     return s + floor;
   }, 0);
-  if (initialMinSum > budget + 0.5) {
+  if (initialMinSum > budgetFor(1) + 0.5) {
     return { feasible: false, minRequired: initialMinSum };
   }
 
@@ -481,7 +484,7 @@ function simulateStrategy(loans, strategyType, budget, maxMonths = 600) {
       }
     });
 
-    let budgetLeft = budget;
+    let budgetLeft = budgetFor(month);
     const plan = {};
     const active = state.filter((l) => l.balance > 0.5);
 
@@ -628,9 +631,13 @@ function shareLabel(share) {
 // simulateStrategy — it doesn't change it. If even paying everything off at
 // once can't get there (a repayment plan runs on its own schedule), returns
 // { possible: false, soonest } with the soonest achievable month count.
-function budgetForTarget(loans, strategyType, targetMonths) {
+// `budgetRise(m)` (optional) is how much more than this month's budget month m
+// will have — from income shares that grow over time. The answer is then the
+// budget needed *now*, with those rises still to come on top.
+function budgetForTarget(loans, strategyType, targetMonths, budgetRise = null) {
+  const withRise = (budget) => (budgetRise ? (m) => budget + budgetRise(m) : budget);
   const meetsTarget = (budget) => {
-    const r = simulateStrategy(loans, strategyType, budget);
+    const r = simulateStrategy(loans, strategyType, withRise(budget));
     return r.feasible && r.months <= targetMonths;
   };
   // Enough to clear every ordinary loan in month 1 (balance plus that month's
@@ -639,8 +646,10 @@ function budgetForTarget(loans, strategyType, targetMonths) {
     loans.reduce((s, l) => s + (l.schedule ? l.balance : l.balance * (1 + l.rate / 12)), 0) + 1
   );
   if (!meetsTarget(everything)) {
-    return { possible: false, soonest: simulateStrategy(loans, strategyType, everything).months };
+    return { possible: false, soonest: simulateStrategy(loans, strategyType, withRise(everything)).months };
   }
+  // With rising income shares, the rises alone might already be enough.
+  if (meetsTarget(0)) return { possible: true, budget: 0 };
   let lo = 0;
   let hi = everything;
   while (hi - lo > 1) {
@@ -1937,6 +1946,7 @@ function BudgetEditor({ initialParts, incomes, people, asOfKey, onSave, onCancel
                 </div>
                 <p className="fl-card-sub" style={{ margin: "0 0 6px" }}>
                   {profit > 0 ? `Usual profit ${fmt(profit)} a month` : "Makes no profit right now — adds nothing"}
+                  {src && hasIncomeGrowth(src) ? ` · rises ${incomeGrowthLabel(src.growth)}, and this share with it` : ""}
                 </p>
                 <div className="fl-tag-picker">
                   {[
@@ -2620,6 +2630,20 @@ export default function FamilyLedger() {
   const incomesById = Object.fromEntries(incomes.map((s) => [s.id, s]));
   const budgetParts = budgetPartsOf(strategy);
   const effectiveBudget = budgetTotal(budgetParts, incomesById, asOfKey);
+  // The budget month by month for the next 50 years (index 0 = this month). An
+  // income share follows its source's expected profit, so it rises with the
+  // income (yearly increases, or a source that hasn't started yet).
+  const budgetByMonth = Array.from({ length: 600 }, (_, i) =>
+    i === 0 ? effectiveBudget : budgetTotal(budgetParts, incomesById, monthKeyAdd(asOfKey, i))
+  );
+  const budgetRises = budgetByMonth.some((b) => Math.abs(b - effectiveBudget) > 0.5);
+  // What the Strategy simulations get: the plain number when it never changes
+  // (exactly as before), otherwise month m's budget.
+  const strategyBudget = budgetRises ? (m) => budgetByMonth[Math.min(m, 600) - 1] : effectiveBudget;
+  const nextBudgetRise = (() => {
+    const i = budgetByMonth.findIndex((b) => b > effectiveBudget + 0.5);
+    return i > 0 ? { key: monthKeyAdd(asOfKey, i), amount: budgetByMonth[i] } : null;
+  })();
   // How much of each income source goes toward debts, for the Income screens.
   const toDebtsByIncome = {};
   budgetParts.forEach((p) => {
@@ -2660,7 +2684,7 @@ export default function FamilyLedger() {
 
   const strategyResult =
     strategyLoans.length > 0
-      ? simulateStrategy(strategyLoans, strategy.type, effectiveBudget)
+      ? simulateStrategy(strategyLoans, strategy.type, strategyBudget)
       : null;
   const statusQuoResult = strategyLoans.length > 0 ? simulateStatusQuo(strategyLoans) : null;
 
@@ -2680,7 +2704,14 @@ export default function FamilyLedger() {
   // Debt-free goal: the monthly budget needed to clear everything by then.
   const goalMonths = strategy.targetMonths || null;
   const goalResult =
-    goalMonths && strategyLoans.length > 0 ? budgetForTarget(strategyLoans, strategy.type, goalMonths) : null;
+    goalMonths && strategyLoans.length > 0
+      ? budgetForTarget(
+          strategyLoans,
+          strategy.type,
+          goalMonths,
+          budgetRises ? (m) => budgetByMonth[Math.min(m, 600) - 1] - effectiveBudget : null
+        )
+      : null;
   const byMonth = (months) => monthKeyShort(monthKeyAdd(asOfKey, months - 1));
   const goalBlock =
     strategyLoans.length === 0 ? null : editingGoal ? (
@@ -2703,8 +2734,13 @@ export default function FamilyLedger() {
         {goalResult.possible ? (
           <>
             <p className="fl-summary-value fl-mono" style={{ fontSize: 22 }}>
-              {fmt(goalResult.budget)} a month
+              {fmt(goalResult.budget)} a month{budgetRises ? " now" : ""}
             </p>
+            {budgetRises && (
+              <p className="fl-card-sub" style={{ marginTop: 2 }}>
+                Then rising on its own as your income shares grow.
+              </p>
+            )}
             <p className="fl-card-sub" style={{ marginTop: 4 }}>
               {goalResult.budget > effectiveBudget + 0.5
                 ? `Put this toward debts each month — ${fmt(goalResult.budget - effectiveBudget)} more than your budget of ${fmt(effectiveBudget)}.`
@@ -3390,13 +3426,23 @@ export default function FamilyLedger() {
                 </button>
               </div>
               <p className="fl-summary-value fl-mono">{fmt(effectiveBudget)}</p>
+              {nextBudgetRise && (
+                <p className="fl-card-sub" style={{ marginTop: 4 }}>
+                  Rises to {fmt(nextBudgetRise.amount)} from {monthKeyShort(nextBudgetRise.key)} as income grows — the
+                  plan below counts every future rise.
+                </p>
+              )}
               {(budgetParts.length > 1 || budgetParts.some((p) => p.kind === "income")) && (
                 <div className="fl-budget-breakdown">
                   {budgetParts.map((p) => (
                     <div className="fl-budget-line" key={p.id}>
                       <span>
                         {p.kind === "income"
-                          ? `${incomesById[p.incomeId] ? incomesById[p.incomeId].name : "Removed income source"} · ${shareLabel(p.share)}`
+                          ? `${incomesById[p.incomeId] ? incomesById[p.incomeId].name : "Removed income source"} · ${shareLabel(p.share)}${
+                              incomesById[p.incomeId] && hasIncomeGrowth(incomesById[p.incomeId])
+                                ? ` · rises ${incomeGrowthLabel(incomesById[p.incomeId].growth)}`
+                                : ""
+                            }`
                           : p.label}
                       </span>
                       <span className="fl-mono">{fmt(budgetPartAmount(p, incomesById, asOfKey))}</span>
