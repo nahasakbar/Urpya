@@ -547,6 +547,77 @@ const styles = `
     display: flex;
     gap: 6px;
   }
+  /* Brass "+" (add a debt) in the header's top-right corner. */
+  .fl-topbar-add {
+    position: absolute;
+    top: calc(16px + env(safe-area-inset-top, 0px));
+    right: 16px;
+    z-index: 2;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #3A2717;
+    background: radial-gradient(circle at 35% 30%, var(--brass-light), var(--brass) 60%, #7A5A22 100%);
+    border: 1px solid rgba(0,0,0,0.35);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.35);
+    cursor: pointer;
+  }
+  .fl-topbar-add:active { transform: translateY(1px); }
+  .fl-topbar-has-action { padding-right: 48px; }
+
+  /* Full-screen page that slides up over the app (used for adding a debt). */
+  .fl-sheet {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--paper);
+    animation: fl-sheet-up 0.22s ease-out;
+  }
+  @keyframes fl-sheet-up {
+    from { transform: translateY(24px); opacity: 0; }
+    to { transform: none; opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .fl-sheet { animation: none; }
+  }
+  .fl-sheet-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 16px 14px 20px;
+    z-index: 1;
+  }
+  .fl-sheet-close {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #F3E7D0;
+    background: rgba(0,0,0,0.2);
+    border: 1px solid rgba(228,197,131,0.45);
+    cursor: pointer;
+  }
+  .fl-sheet-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 16px 16px calc(24px + env(safe-area-inset-bottom, 0px));
+    position: relative;
+    z-index: 1;
+  }
   .fl-title {
     font-size: 22px;
     font-weight: 700;
@@ -1071,7 +1142,8 @@ function termSummary(lender, asOfKey) {
   );
 }
 
-function LenderForm({ initial, onSave, onCancel }) {
+// `inSheet`: shown on the full-screen add page, whose header already has the title.
+function LenderForm({ initial, onSave, onCancel, inSheet }) {
   const [name, setName] = useState(initial ? initial.name : "");
   const [category, setCategory] = useState(initial && initial.category ? initial.category : null);
   // The interest switch is the loan's `type`: on = "interest", off = "fixed".
@@ -1149,7 +1221,7 @@ function LenderForm({ initial, onSave, onCancel }) {
 
   return (
     <div className="fl-panel">
-      <p className="fl-panel-title fl-serif">{initial ? "Edit debt" : "Add a new debt"}</p>
+      {!inSheet && <p className="fl-panel-title fl-serif">{initial ? "Edit debt" : "Add a new debt"}</p>}
 
       <div className="fl-field">
         <label>Lender name</label>
@@ -1839,6 +1911,8 @@ export default function FamilyLedger() {
   }
 
   const selectedLoan = lenders.find((l) => l.id === selectedLoanId) || null;
+  // The header's + (add a debt) shows on the screens that list debts.
+  const canAddFromHeader = view === "dashboard" || view === "loans";
 
   return (
     <div className="fl-shell">
@@ -1863,11 +1937,17 @@ export default function FamilyLedger() {
 
       <div className="fl-topbar fl-leather fl-stitch-bottom">
         <div className="fl-grain fl-grain-leather"></div>
-        <div className="fl-topbar-rivets">
-          <div className="fl-rivet"></div>
-          <div className="fl-rivet"></div>
-        </div>
-        <div className="fl-z1">
+        {canAddFromHeader ? (
+          <button className="fl-topbar-add" onClick={() => setShowAddLoan(true)} aria-label="Add a debt">
+            <Plus size={20} strokeWidth={2.5} />
+          </button>
+        ) : (
+          <div className="fl-topbar-rivets">
+            <div className="fl-rivet"></div>
+            <div className="fl-rivet"></div>
+          </div>
+        )}
+        <div className={"fl-z1" + (canAddFromHeader ? " fl-topbar-has-action" : "")}>
           {view === "loanDetail" && selectedLoan ? (
             <>
               <button className="fl-back-row" onClick={() => setView("loans")}>
@@ -1901,7 +1981,7 @@ export default function FamilyLedger() {
             </div>
 
             {lenderSummaries.length === 0 && (
-              <div className="fl-empty">Nothing added yet. Add one from the Debts tab.</div>
+              <div className="fl-empty">Nothing added yet. Tap + at the top to add a debt.</div>
             )}
 
             {lenderSummaries.map((l) => {
@@ -2012,12 +2092,8 @@ export default function FamilyLedger() {
               )
             )}
 
-            {showAddLoan ? (
-              <LenderForm onCancel={() => setShowAddLoan(false)} onSave={addLoan} />
-            ) : (
-              <button className="fl-add-row" onClick={() => setShowAddLoan(true)}>
-                <Plus size={16} /> Add a debt or creditor
-              </button>
+            {lenders.length === 0 && (
+              <div className="fl-empty">Nothing added yet. Tap + at the top to add a debt.</div>
             )}
           </>
         )}
@@ -2396,6 +2472,22 @@ export default function FamilyLedger() {
       </div>
 
       {toast && <div className="fl-toast">{toast}</div>}
+
+      {showAddLoan && (
+        <div className="fl-sheet" role="dialog" aria-modal="true" aria-label="Add a new debt">
+          <div className="fl-grain fl-grain-paper"></div>
+          <div className="fl-sheet-head fl-leather fl-stitch-bottom">
+            <div className="fl-grain fl-grain-leather"></div>
+            <h2 className="fl-title fl-serif fl-z1">Add a new debt</h2>
+            <button className="fl-sheet-close fl-z1" onClick={() => setShowAddLoan(false)} aria-label="Close">
+              <X size={20} />
+            </button>
+          </div>
+          <div className="fl-sheet-body">
+            <LenderForm inSheet onCancel={() => setShowAddLoan(false)} onSave={addLoan} />
+          </div>
+        </div>
+      )}
 
       <div className="fl-bottomnav fl-leather fl-stitch-top">
         <div className="fl-grain fl-grain-leather"></div>
