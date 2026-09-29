@@ -7,13 +7,13 @@ A React + Vite app for tracking family loans/debts between a few people, with Su
 The UI is a "leather passbook" theme (leather, paper, and ribbon-bookmark textures, brass accents), matched to an approved design mockup. In `src/App.jsx`:
 
 - `const styles` (~line 331) holds all CSS, including SVG grain-texture filter defs referenced via `url(#grainLeather)` etc. — filter regions must stay tightly clipped or the texture bleeds past its element.
-- `.fl-shell` is the full-screen app container. It's pinned with `position: fixed; top: 0; bottom: 0` rather than `height: 100vh/100dvh`, specifically to avoid an iOS bug where `dvh` under-measures the screen in standalone ("Add to Home Screen") mode.
+- `.fl-shell` is the full-screen app container, pinned with `position: fixed; top: 0; bottom: 0`. In standalone ("Add to Home Screen") mode it switches to `height: 100lvh` instead (via `@media (display-mode: standalone)`, plus an `html.fl-standalone` class set from `navigator.standalone` in `index.html`). This works around an iOS 26+ bug where, in standalone mode, `bottom: 0`, `100%`, `100dvh` and `100svh` all come up short by the status-bar height, leaving a strip below the tab bar. Only `100lvh` measures the full screen. The page background behind the app is leather brown, so if the strip ever comes back it will look brown, not white.
 - `.fl-topbar` / `.fl-bottomnav` are the leather header and tab bar, padded with `env(safe-area-inset-top/bottom)` for the notch and home-indicator.
 - Status chips (`.fl-chip` + `.chip-green` / `.chip-grey` / `.chip-blue`, and `.fl-overdue` for red) follow a fixed color convention: paid = green, missed/overdue = red, due soon = grey, protected = blue.
 
 ## Open item
 
-If a white gap ever reappears at a screen edge in iOS standalone mode, check whether `index.html`'s `<meta name="viewport">` includes `viewport-fit=cover` — required for the page to draw under the safe areas at all.
+The `100lvh` fix for the bottom strip (above) hasn't yet been confirmed on the real phone in Home Screen mode. If a gap still shows at a screen edge there, first check that `index.html`'s `<meta name="viewport">` still includes `viewport-fit=cover`, which the page needs to draw under the safe areas at all.
 
 ## Working with this project
 

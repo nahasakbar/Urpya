@@ -367,6 +367,13 @@ const styles = `
     flex-direction: column;
     overflow: hidden;
   }
+  /* iOS 26+ Home Screen bug: in standalone mode top:0/bottom:0, 100% and
+     100dvh all come up short by the status-bar height, leaving a strip
+     below the tab bar. 100lvh is the one unit that reports the full screen. */
+  @media (display-mode: standalone) {
+    .fl-shell { bottom: auto; height: 100lvh; }
+  }
+  html.fl-standalone .fl-shell { bottom: auto; height: 100lvh; }
   .fl-shell * { box-sizing: border-box; }
   .fl-serif { font-family: 'Fraunces', Georgia, "Times New Roman", serif; }
   .fl-mono { font-family: ui-monospace, Menlo, Consolas, "Courier New", monospace; }
