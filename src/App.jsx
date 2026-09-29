@@ -312,10 +312,53 @@ function planYearlyRate(received, amounts) {
 
 // ---- Income sources ----
 // A business, property, farm etc. that brings money in. Saved in data.incomes
-// as { id, name, category, capital, startMonth, usualIncome, usualExpenses },
-// with actual figures in data.incomeRecords[id]["YYYY-MM"] = { income,
-// expenses }. Entirely separate from the debts: nothing here feeds into any
-// balance or the Strategy plan.
+// as { id, name, category, capital, startMonth, usualIncome, usualExpenses,
+// growth }, with actual figures in data.incomeRecords[id]["YYYY-MM"] = {
+// income, expenses }. Entirely separate from the debts: nothing here feeds
+// into any balance or the Strategy plan.
+//
+// growth (optional): { pct, everyMonths, firstMonth } — the usual income rises
+// by pct every `everyMonths`, first in firstMonth (null = one period after the
+// start month). Each rise builds on the last, like interest. Expenses don't rise.
+
+// When a source's first income rise happens.
+function firstIncomeRise(source) {
+  const g = source.growth;
+  return g.firstMonth || monthKeyAdd(source.startMonth || currentMonthKey(), g.everyMonths);
+}
+
+function hasIncomeGrowth(source) {
+  const g = source.growth;
+  return !!g && g.pct > 0 && g.everyMonths >= 1;
+}
+
+// The usual income expected in a given month, with any rises applied by then.
+function expectedIncomeFor(source, key) {
+  const base = Number(source.usualIncome) || 0;
+  if (!hasIncomeGrowth(source)) return base;
+  const since = monthsBetween(firstIncomeRise(source), key);
+  if (since < 0) return base;
+  const rises = 1 + Math.floor(since / source.growth.everyMonths);
+  return base * Math.pow(1 + source.growth.pct, rises);
+}
+
+// "5% every year", "10% every 6 months".
+function incomeGrowthLabel(growth) {
+  const pct = Math.round(growth.pct * 100 * 100) / 100;
+  const m = growth.everyMonths;
+  const every =
+    m % 12 === 0 ? (m === 12 ? "year" : `${m / 12} years`) : m === 1 ? "month" : `${m} months`;
+  return `${pct}% every ${every}`;
+}
+
+// The next month (after `asOfKey`) the income rises, and what it rises to.
+function nextIncomeRise(source, asOfKey) {
+  if (!hasIncomeGrowth(source)) return null;
+  const first = firstIncomeRise(source);
+  const since = monthsBetween(first, asOfKey);
+  const key = since < 0 ? first : monthKeyAdd(first, (Math.floor(since / source.growth.everyMonths) + 1) * source.growth.everyMonths);
+  return { key, amount: expectedIncomeFor(source, key) };
+}
 
 // Month-by-month figures from the start month to now. Only recorded months
 // count toward the totals — a month nobody has recorded yet counts as nothing,
@@ -337,13 +380,27 @@ function computeIncome(source, records, asOfKey) {
   }
   const totalProfit = totalIncome - totalExpenses;
   const capital = Number(source.capital) || 0;
-  const usualProfit = (Number(source.usualIncome) || 0) - (Number(source.usualExpenses) || 0);
+  const usualExpenses = Number(source.usualExpenses) || 0;
+  // This month's usual profit (with any income rises applied so far).
+  const usualProfit = expectedIncomeFor(source, asOfKey) - usualExpenses;
   const stillToEarnBack = Math.max(capital - totalProfit, 0);
   // Months until the capital is earned back if the usual profit keeps coming
   // in: 0 once it has been (or there's no capital), null if the usual figures
-  // don't make a profit.
-  const monthsToPayback =
-    capital > 0 && stillToEarnBack > 0.5 ? (usualProfit > 0 ? Math.ceil(stillToEarnBack / usualProfit) : null) : 0;
+  // never make it back (checked 100 years out).
+  let monthsToPayback = 0;
+  if (capital > 0 && stillToEarnBack > 0.5) {
+    if (!hasIncomeGrowth(source)) {
+      monthsToPayback = usualProfit > 0 ? Math.ceil(stillToEarnBack / usualProfit) : null;
+    } else {
+      let earned = 0;
+      let n = 0;
+      while (earned < stillToEarnBack - 0.5 && n < 1200) {
+        n++;
+        earned += expectedIncomeFor(source, monthKeyAdd(asOfKey, n)) - usualExpenses;
+      }
+      monthsToPayback = earned >= stillToEarnBack - 0.5 ? n : null;
+    }
+  }
   return {
     rows,
     totalIncome,
@@ -506,6 +563,35 @@ function simulateStatusQuo(loans, maxMonths = 600) {
   });
 
   return { totalInterest, months, payoffMonth, stalled };
+}
+
+// The smallest monthly budget (rounded up to the next ₹100) that clears every
+// loan within `targetMonths` under the given strategy. Only runs
+// simulateStrategy — it doesn't change it. If even paying everything off at
+// once can't get there (a repayment plan runs on its own schedule), returns
+// { possible: false, soonest } with the soonest achievable month count.
+function budgetForTarget(loans, strategyType, targetMonths) {
+  const meetsTarget = (budget) => {
+    const r = simulateStrategy(loans, strategyType, budget);
+    return r.feasible && r.months <= targetMonths;
+  };
+  // Enough to clear every ordinary loan in month 1 (balance plus that month's
+  // interest) while a repayment plan is paid its full remaining balance.
+  const everything = Math.ceil(
+    loans.reduce((s, l) => s + (l.schedule ? l.balance : l.balance * (1 + l.rate / 12)), 0) + 1
+  );
+  if (!meetsTarget(everything)) {
+    return { possible: false, soonest: simulateStrategy(loans, strategyType, everything).months };
+  }
+  let lo = 0;
+  let hi = everything;
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (meetsTarget(mid)) hi = mid;
+    else lo = mid;
+  }
+  const rounded = Math.ceil(hi / 100) * 100;
+  return { possible: true, budget: meetsTarget(rounded) ? rounded : hi };
 }
 
 const styles = `
@@ -1092,6 +1178,17 @@ const styles = `
     margin-top: 10px;
   }
   .fl-stat-label { font-size: 11px; color: var(--muted); margin: 0; }
+  .fl-stat-edit {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-family: inherit;
+    cursor: pointer;
+  }
   .fl-stat-value { font-size: 17px; font-weight: 700; margin: 2px 0 0; }
 
   .fl-month-row {
@@ -1681,6 +1778,61 @@ function MonthEntryForm({ people, monthKey, onMonthKeyChange, defaults, isExisti
   );
 }
 
+function DebtFreeGoalForm({ initialMonths, onSave, onCancel, onRemove }) {
+  const [unit, setUnit] = useState(initialMonths && initialMonths % 12 === 0 ? "years" : "months");
+  const [length, setLength] = useState(
+    initialMonths ? String(initialMonths % 12 === 0 ? initialMonths / 12 : initialMonths) : ""
+  );
+  const months = Math.round(unit === "years" ? Number(length) * 12 : Number(length));
+
+  return (
+    <div className="fl-panel">
+      <p className="fl-panel-title fl-serif">When do you want to be debt-free?</p>
+      <div className="fl-field">
+        <label>Debt-free in</label>
+        <div className="fl-term-row">
+          <input
+            type="number"
+            inputMode="decimal"
+            value={length}
+            onChange={(e) => setLength(e.target.value)}
+            placeholder={unit === "years" ? "e.g. 3" : "e.g. 36"}
+          />
+          {["months", "years"].map((u) => (
+            <button
+              key={u}
+              type="button"
+              className={"fl-tag-option" + (unit === u ? " selected" : "")}
+              aria-pressed={unit === u}
+              onClick={() => setUnit(u)}
+            >
+              {u === "months" ? "Months" : "Years"}
+            </button>
+          ))}
+        </div>
+        {months >= 1 && (
+          <p className="fl-card-sub" style={{ marginTop: 6 }}>
+            That’s by {monthKeyLabel(monthKeyAdd(currentMonthKey(), months - 1))}.
+          </p>
+        )}
+      </div>
+      <div className="fl-form-actions">
+        {onRemove && (
+          <button className="fl-btn secondary" onClick={onRemove}>
+            Remove goal
+          </button>
+        )}
+        <button className="fl-btn secondary" onClick={onCancel}>
+          Cancel
+        </button>
+        <button className="fl-btn" onClick={() => months >= 1 && onSave(months)}>
+          Save
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function StrategyBudgetForm({ initialBudget, onSave, onCancel }) {
   const [budget, setBudget] = useState(String(initialBudget || 0));
   return (
@@ -1732,8 +1884,37 @@ function IncomeForm({ initial, onSave, onCancel, inSheet }) {
   const [usualIncome, setUsualIncome] = useState(initial ? String(initial.usualIncome || 0) : "");
   const [usualExpenses, setUsualExpenses] = useState(initial ? String(initial.usualExpenses || 0) : "");
   const [startMonth, setStartMonth] = useState(initial && initial.startMonth ? initial.startMonth : currentMonthKey());
+  // Income increases: saved as { pct, everyMonths, firstMonth }; reopens in years when it divides evenly.
+  const initialGrowth = initial && hasIncomeGrowth(initial) ? initial.growth : null;
+  const [hasGrowth, setHasGrowth] = useState(!!initialGrowth);
+  const [growthPct, setGrowthPct] = useState(initialGrowth ? String(Math.round(initialGrowth.pct * 100 * 1e6) / 1e6) : "");
+  const [growthUnit, setGrowthUnit] = useState(initialGrowth && initialGrowth.everyMonths % 12 !== 0 ? "months" : "years");
+  const [growthEvery, setGrowthEvery] = useState(
+    initialGrowth
+      ? String(initialGrowth.everyMonths % 12 === 0 ? initialGrowth.everyMonths / 12 : initialGrowth.everyMonths)
+      : "1"
+  );
+  // Left empty, the first increase comes one period after the start month.
+  const [growthFirst, setGrowthFirst] = useState(initialGrowth && initialGrowth.firstMonth ? initialGrowth.firstMonth : "");
+  const [growthError, setGrowthError] = useState(false);
   const cap = Number(capital) || 0;
-  const usualProfit = (Number(usualIncome) || 0) - (Number(usualExpenses) || 0);
+  const growthEveryMonths = Math.round(growthUnit === "years" ? Number(growthEvery) * 12 : Number(growthEvery));
+  const growth =
+    hasGrowth && Number(growthPct) > 0 && growthEveryMonths >= 1
+      ? { pct: Number(growthPct) / 100, everyMonths: growthEveryMonths, firstMonth: growthFirst || null }
+      : null;
+  // The source as it would be saved, for the live preview.
+  const draft = {
+    capital: cap,
+    startMonth: startMonth || currentMonthKey(),
+    usualIncome: Number(usualIncome) || 0,
+    usualExpenses: Number(usualExpenses) || 0,
+    growth,
+  };
+  const draftStats = computeIncome(draft, {}, draft.startMonth);
+  const usualProfit = draftStats.usualProfit;
+  const firstRise = growth ? nextIncomeRise(draft, draft.startMonth) : null;
+  const secondRise = firstRise ? nextIncomeRise(draft, firstRise.key) : null;
 
   return (
     <div className="fl-panel">
@@ -1778,6 +1959,83 @@ function IncomeForm({ initial, onSave, onCancel, inSheet }) {
       </div>
 
       <div className="fl-field">
+        <div className="fl-switch-row">
+          <span className="fl-switch-label">Income increases</span>
+          <Switch
+            on={hasGrowth}
+            onChange={(on) => {
+              setHasGrowth(on);
+              setGrowthError(false);
+            }}
+            label="Income increases"
+          />
+        </div>
+        <p className="fl-card-sub">
+          {hasGrowth
+            ? "The usual income goes up by a set % at regular times — each rise builds on the last, like interest."
+            : "For income that goes up over time, like rent that rises every year."}
+        </p>
+      </div>
+
+      {hasGrowth && (
+        <>
+          <div className="fl-field">
+            <label>Increase (%)</label>
+            <input
+              type="number"
+              inputMode="decimal"
+              value={growthPct}
+              onChange={(e) => {
+                setGrowthPct(e.target.value);
+                setGrowthError(false);
+              }}
+              placeholder="e.g. 5"
+            />
+          </div>
+          <div className="fl-field">
+            <label>Every</label>
+            <div className="fl-term-row">
+              <input
+                type="number"
+                inputMode="decimal"
+                value={growthEvery}
+                onChange={(e) => {
+                  setGrowthEvery(e.target.value);
+                  setGrowthError(false);
+                }}
+                placeholder="e.g. 1"
+              />
+              {["months", "years"].map((u) => (
+                <button
+                  key={u}
+                  type="button"
+                  className={"fl-tag-option" + (growthUnit === u ? " selected" : "")}
+                  aria-pressed={growthUnit === u}
+                  onClick={() => setGrowthUnit(u)}
+                >
+                  {u === "months" ? "Months" : "Years"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="fl-field">
+            <label>First increase</label>
+            <input
+              type="month"
+              value={growthFirst || (growthEveryMonths >= 1 ? monthKeyAdd(draft.startMonth, growthEveryMonths) : "")}
+              onChange={(e) => setGrowthFirst(e.target.value)}
+            />
+            <p className="fl-card-sub">One period after it started, unless you change it.</p>
+            {growthError && (
+              <p className="fl-overdue">
+                <AlertCircle size={12} /> Enter the increase % and how often it happens, or turn Income increases off.
+              </p>
+            )}
+          </div>
+        </>
+      )}
+
+      <div className="fl-field">
         <label>Usual monthly expenses (₹)</label>
         <input
           type="number"
@@ -1789,7 +2047,16 @@ function IncomeForm({ initial, onSave, onCancel, inSheet }) {
         {(Number(usualIncome) > 0 || Number(usualExpenses) > 0) && (
           <div className="fl-plan-preview">
             {usualProfit >= 0 ? `Usual profit ${fmt(usualProfit)} a month` : `Usually a loss of ${fmt(-usualProfit)} a month`}
-            {cap > 0 && usualProfit > 0 ? ` — earns back the capital in about ${monthsLabel(Math.ceil(cap / usualProfit))}.` : "."}
+            {cap > 0 && draftStats.monthsToPayback > 0
+              ? ` — earns back the capital in about ${monthsLabel(draftStats.monthsToPayback)}.`
+              : "."}
+            {firstRise && (
+              <>
+                <br />
+                Income rises to {fmt(firstRise.amount)} from {monthKeyShort(firstRise.key)}
+                {secondRise ? `, then ${fmt(secondRise.amount)} from ${monthKeyShort(secondRise.key)}` : ""}.
+              </>
+            )}
           </div>
         )}
       </div>
@@ -1807,6 +2074,10 @@ function IncomeForm({ initial, onSave, onCancel, inSheet }) {
           className="fl-btn"
           onClick={() => {
             if (!name.trim()) return;
+            if (hasGrowth && !growth) {
+              setGrowthError(true);
+              return;
+            }
             onSave({
               name: name.trim(),
               category,
@@ -1814,6 +2085,7 @@ function IncomeForm({ initial, onSave, onCancel, inSheet }) {
               usualIncome: Number(usualIncome) || 0,
               usualExpenses: Number(usualExpenses) || 0,
               startMonth: startMonth || currentMonthKey(),
+              growth,
             });
           }}
         >
@@ -1885,6 +2157,7 @@ export default function FamilyLedger() {
   const [pendingIncomeMonth, setPendingIncomeMonth] = useState(null);
   const [newPerson, setNewPerson] = useState("");
   const [editingBudget, setEditingBudget] = useState(false);
+  const [editingGoal, setEditingGoal] = useState(false);
   const [toast, setToast] = useState("");
   const toastTimer = useRef(null);
   const lastWrittenJson = useRef(null);
@@ -2076,10 +2349,68 @@ export default function FamilyLedger() {
       ? simulateStrategy(strategyLoans, strategy.type, Number(strategy.budget) || 0)
       : null;
   const statusQuoResult = strategyLoans.length > 0 ? simulateStatusQuo(strategyLoans) : null;
+  // Debt-free goal: the monthly budget needed to clear everything by then.
+  const goalMonths = strategy.targetMonths || null;
+  const goalResult =
+    goalMonths && strategyLoans.length > 0 ? budgetForTarget(strategyLoans, strategy.type, goalMonths) : null;
+  const byMonth = (months) => monthKeyShort(monthKeyAdd(asOfKey, months - 1));
+  const goalBlock =
+    strategyLoans.length === 0 ? null : editingGoal ? (
+      <DebtFreeGoalForm
+        initialMonths={goalMonths || (strategyResult && strategyResult.feasible ? strategyResult.months : null)}
+        onCancel={() => setEditingGoal(false)}
+        onSave={(months) => updateStrategy({ targetMonths: months })}
+        onRemove={goalMonths ? () => updateStrategy({ targetMonths: null }) : null}
+      />
+    ) : goalResult ? (
+      <div className="fl-summary">
+        <div className="fl-card-row">
+          <p className="fl-summary-label">
+            Goal: debt-free in {monthsLabel(goalMonths)} (by {byMonth(goalMonths)})
+          </p>
+          <button className="fl-icon-btn" onClick={() => setEditingGoal(true)} aria-label="Edit debt-free goal">
+            <Pencil size={14} />
+          </button>
+        </div>
+        {goalResult.possible ? (
+          <>
+            <p className="fl-summary-value fl-mono" style={{ fontSize: 22 }}>
+              {fmt(goalResult.budget)} a month
+            </p>
+            <p className="fl-card-sub" style={{ marginTop: 4 }}>
+              {goalResult.budget > strategy.budget + 0.5
+                ? `Put this toward debts each month — ${fmt(goalResult.budget - strategy.budget)} more than your budget of ${fmt(strategy.budget)}.`
+                : goalResult.budget < strategy.budget - 0.5
+                ? `Your budget of ${fmt(strategy.budget)} already gets you there — this is the least that would.`
+                : "That’s exactly your budget now."}
+            </p>
+            {Math.abs(goalResult.budget - strategy.budget) > 0.5 && (
+              <button
+                className="fl-btn"
+                style={{ marginTop: 10, width: "100%" }}
+                onClick={() => updateStrategy({ budget: goalResult.budget })}
+              >
+                Use {fmt(goalResult.budget)} as my budget
+              </button>
+            )}
+          </>
+        ) : (
+          <p className="fl-card-sub" style={{ marginTop: 4 }}>
+            Not possible — the soonest is {monthsLabel(goalResult.soonest)} (by {byMonth(goalResult.soonest)}), because a
+            repayment plan runs on its own schedule and can’t be paid off faster.
+          </p>
+        )}
+      </div>
+    ) : (
+      <button className="fl-add-row" style={{ marginBottom: 14 }} onClick={() => setEditingGoal(true)}>
+        <Target size={16} /> Set a debt-free goal
+      </button>
+    );
 
   function updateStrategy(fields) {
     persist({ ...data, strategy: { ...strategy, ...fields } });
     setEditingBudget(false);
+    setEditingGoal(false);
   }
 
   function addLoan(fields) {
@@ -2486,9 +2817,18 @@ export default function FamilyLedger() {
                       </div>
                       <p className="fl-stat-value fl-mono" style={{ fontSize: 20 }}>{fmt(st.capital)}</p>
                       <p className="fl-card-sub" style={{ marginTop: 4 }}>
-                        Started {monthKeyShort(s.startMonth || asOfKey)} · usually {fmt(s.usualIncome)} in,{" "}
-                        {fmt(s.usualExpenses)} out
+                        Started {monthKeyShort(s.startMonth || asOfKey)} · usually{" "}
+                        {fmt(expectedIncomeFor(s, asOfKey))} in, {fmt(s.usualExpenses)} out
                       </p>
+                      {hasIncomeGrowth(s) && (
+                        <p className="fl-card-sub">
+                          Income rises {incomeGrowthLabel(s.growth)}
+                          {(() => {
+                            const next = nextIncomeRise(s, asOfKey);
+                            return next ? ` · next: ${fmt(next.amount)} from ${monthKeyShort(next.key)}` : "";
+                          })()}
+                        </p>
+                      )}
                       {categoryLabel(s.category, INCOME_CATEGORIES) && (
                         <div className="fl-chip-row" style={{ marginTop: 6 }}>
                           <span className="fl-chip chip-tag">{categoryLabel(s.category, INCOME_CATEGORIES)}</span>
@@ -2533,7 +2873,11 @@ export default function FamilyLedger() {
                           key={row.key}
                           monthKey={row.key}
                           onMonthKeyChange={setPendingIncomeMonth}
-                          defaults={row.recorded ? row : { income: s.usualIncome, expenses: s.usualExpenses }}
+                          defaults={
+                            row.recorded
+                              ? row
+                              : { income: Math.round(expectedIncomeFor(s, row.key)), expenses: s.usualExpenses }
+                          }
                           isExisting={row.recorded}
                           title={(row.recorded ? "Edit " : "Record ") + monthKeyLabel(row.key)}
                           onCancel={() => setPendingIncomeMonth(null)}
@@ -2572,9 +2916,10 @@ export default function FamilyLedger() {
 
                     {pendingIncomeMonth !== null && !st.rows.some((r) => r.key === pendingIncomeMonth) && (
                       <IncomeMonthForm
+                        key={pendingIncomeMonth}
                         monthKey={pendingIncomeMonth}
                         onMonthKeyChange={setPendingIncomeMonth}
-                        defaults={{ income: s.usualIncome, expenses: s.usualExpenses }}
+                        defaults={{ income: Math.round(expectedIncomeFor(s, pendingIncomeMonth)), expenses: s.usualExpenses }}
                         isExisting={!!records[pendingIncomeMonth]}
                         title={"Record " + monthKeyLabel(pendingIncomeMonth)}
                         onCancel={() => setPendingIncomeMonth(null)}
@@ -2696,13 +3041,18 @@ export default function FamilyLedger() {
               </div>
             )}
 
+            {strategyLoans.length > 0 && strategyResult && !strategyResult.feasible && goalBlock}
+
             {strategyLoans.length > 0 && strategyResult && strategyResult.feasible && (
               <>
                 <div className="fl-detail-head">
                   <p className="fl-card-sub">With this strategy</p>
                   <div className="fl-detail-grid">
                     <div>
-                      <p className="fl-stat-label">Debt-free in</p>
+                      <button className="fl-stat-edit" onClick={() => setEditingGoal(true)} aria-label="Set a debt-free goal">
+                        <span className="fl-stat-label">Debt-free in</span>
+                        <Pencil size={11} />
+                      </button>
                       <p className="fl-stat-value fl-mono">{monthsLabel(strategyResult.months)}</p>
                     </div>
                     <div>
@@ -2737,6 +3087,8 @@ export default function FamilyLedger() {
                     </p>
                   )}
                 </div>
+
+                <div style={{ marginTop: 14 }}>{goalBlock}</div>
 
                 <p className="fl-section-title">Pay this for {monthKeyLabel(asOfKey)}</p>
                 {strategyLoans

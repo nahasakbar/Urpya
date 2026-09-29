@@ -27,6 +27,12 @@ On screen, entries are called **debts** (the tab is "Debts", "Add a debt or cred
 
 The Income tab tracks businesses, property, rentals and similar. They're saved in `data.incomes` (`{ id, name, category, capital, startMonth, usualIncome, usualExpenses }`, with tags from `INCOME_CATEGORIES`), and actual figures are saved in `data.incomeRecords[id]["YYYY-MM"] = { income, expenses }`. `computeIncome` gives month rows, total profit, capital earned back, and months to go at the usual profit. Only recorded months count; unrecorded months are not assumed to match the usual figures. Income is deliberately kept apart from debts: the Dashboard shows a summary card, and the Strategy tab shows a one-line hint about usual profit, but neither feeds into any debt balance or the payoff plan. Old saved data has no `incomes` key, and the code treats that as empty rather than migrating it.
 
+An income source can have an optional `growth: { pct, everyMonths, firstMonth }`. The usual income rises by `pct` every `everyMonths`, compounding, starting in `firstMonth` (null means one period after `startMonth`). Expenses don't rise. `expectedIncomeFor(source, month)` is the single place this is applied. It feeds the pre-filled amount when recording a month, the current usual profit, and the earn-back estimate. Without growth, `computeIncome` behaves exactly as before.
+
+## Debt-free goal
+
+On the Strategy tab, "Debt-free in ✎" sets `strategy.targetMonths`. `budgetForTarget` binary-searches the smallest monthly budget, rounded up to ₹100, at which `simulateStrategy` clears everything within the goal. It only calls the simulation and never changes it. If even paying everything off at once is too slow (a repayment plan runs on its own schedule), it reports the soonest possible instead. The goal card offers "Use ₹X as my budget". This was verified on random loan sets, where the result met the goal and ₹100 less didn't.
+
 ## Testing without touching live data
 
 `.env.local` points at the live family database, so never click Save in the normal dev server. To test the form end-to-end, run a small local stand-in for the Supabase `ledger` table with made-up loans (GET returns `[{payload}]`, POST upsert stores it and returns 201, plus CORS). Then start a second Vite on another port with `VITE_SUPABASE_URL=http://127.0.0.1:<port> VITE_SUPABASE_ANON_KEY=test`, since shell env vars override `.env.local`. Confirm no requests go to supabase.co before saving anything.
