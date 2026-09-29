@@ -265,6 +265,49 @@ drop trigger if exists settings_history on public.user_settings;
 create trigger settings_history after insert or update on public.user_settings
   for each row execute function public.log_history();
 
+-- ---- Account tools ---------------------------------------------------
+
+-- The currency of each item shared with you (its owner's choice), so its
+-- amounts show in the right currency. Accounts that never chose one are in
+-- rupees. Reveals nothing else about the owner's settings.
+create or replace function public.shared_item_currencies()
+returns table (item_id text, currency text)
+language sql stable security definer set search_path = public as $$
+  select i.id, coalesce(us.data ->> 'currency', 'INR')
+  from items i
+  join item_shares s on s.item_id = i.id and s.email = current_email()
+  left join user_settings us on us.user_id = i.owner_id
+  where i.deleted_at is null
+$$;
+revoke execute on function public.shared_item_currencies() from public, anon;
+grant execute on function public.shared_item_currencies() to authenticated;
+
+-- "Delete my account": removes everything the signed-in person owns (their
+-- items with every month, share and history row, and their settings), takes
+-- them off items others shared with them, and deletes their sign-in. All or
+-- nothing: if any step fails, nothing is removed.
+create or replace function public.delete_my_account() returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  v_uid uuid := auth.uid();
+  v_email text := current_email();
+  v_items text[];
+begin
+  if v_uid is null then
+    raise exception 'Not signed in';
+  end if;
+  select coalesce(array_agg(id), '{}') into v_items from items where owner_id = v_uid;
+  delete from item_shares where email = v_email and v_email <> '';
+  delete from items where owner_id = v_uid;
+  delete from user_settings where user_id = v_uid;
+  delete from history
+   where item_id = any (v_items)
+      or (table_name = 'user_settings' and changed_by_email = v_email and v_email <> '');
+  delete from auth.users where id = v_uid;
+end $$;
+revoke execute on function public.delete_my_account() from public, anon;
+grant execute on function public.delete_my_account() to authenticated;
+
 -- ---- Live updates ----------------------------------------------------
 -- Everyone on a shared item sees changes within a second or two.
 do $$

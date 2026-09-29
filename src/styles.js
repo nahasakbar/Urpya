@@ -713,6 +713,31 @@ export const styles = `
     cursor: pointer;
   }
   .fl-code-input { font-size: 22px !important; letter-spacing: 0.3em; text-align: center; }
+
+  /* Currency picker */
+  .fl-field select {
+    width: 100%;
+    padding: 9px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 14px;
+    background: #fff;
+    color: var(--ink);
+    font-family: inherit;
+  }
+  .fl-field select:focus { outline: 2px solid var(--brass); outline-offset: 1px; }
+
+  /* Welcome guide and privacy note */
+  .fl-steps { margin: 0 0 14px; padding-left: 20px; font-size: 13px; line-height: 1.5; color: var(--ink); }
+  .fl-steps li { margin-bottom: 6px; }
+  .fl-prose p { font-size: 13px; line-height: 1.55; color: var(--ink); margin: 0 0 12px; }
+  .fl-prose .fl-panel-title { margin: 18px 0 6px; }
+  .fl-prose .fl-panel-title:first-child { margin-top: 0; }
+  .fl-signin-links { text-align: center; font-size: 12px; color: var(--muted); margin: 2px 0 16px; }
+
+  /* Cloudflare's robot check: invisible unless it needs a tap */
+  .fl-turnstile { display: flex; justify-content: center; }
+  .fl-turnstile iframe { margin-top: 12px; }
   .fl-icon-label { font-size: 12px; margin-left: 2px; }
   .fl-icon-btn { display: inline-flex; align-items: center; min-width: 32px; min-height: 32px; justify-content: center; }
 

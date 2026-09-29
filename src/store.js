@@ -38,13 +38,25 @@ async function selectIn(table, column, values) {
 }
 
 export async function loadEverything() {
-  const [items, shares, settings] = await Promise.all([
+  const [items, shares, settings, currencies] = await Promise.all([
     supabase.from("items").select("*").is("deleted_at", null).then(check),
     supabase.from("item_shares").select("*").then(check),
     supabase.from("user_settings").select("*").maybeSingle().then(check),
+    loadSharedCurrencies(),
   ]);
   const entries = items.length ? await selectIn("entries", "item_id", items.map((i) => i.id)) : [];
-  return { items, shares, entries, settings };
+  return { items, shares, entries, settings, currencies };
+}
+
+// The currency of each item shared with you, from its owner's settings. If
+// the database hasn't been given this yet, everything counts as rupees.
+async function loadSharedCurrencies() {
+  const res = await supabase.rpc("shared_item_currencies");
+  if (res.error) {
+    console.error("shared currencies unavailable", res.error);
+    return [];
+  }
+  return res.data || [];
 }
 
 // Items keep the order they were added in (`position`), oldest first.
@@ -55,10 +67,10 @@ function byPosition(a, b) {
   return String(a.created_at).localeCompare(String(b.created_at));
 }
 
-// Builds the app's in-memory shape from rows, plus `meta`: versions and
-// ownership/sharing per item, kept apart so the data itself is exactly what
-// the calculations expect.
-export function assemble({ items, shares, entries, settings }) {
+// Builds the app's in-memory shape from rows, plus `meta`: versions,
+// ownership, sharing and (for items shared with you) the owner's currency per
+// item, kept apart so the data itself is exactly what the calculations expect.
+export function assemble({ items, shares, entries, settings, currencies = [] }) {
   const lenders = [];
   const incomes = [];
   const payments = {};
@@ -84,6 +96,9 @@ export function assemble({ items, shares, entries, settings }) {
   for (const s of shares) {
     if (meta.items[s.item_id]) meta.items[s.item_id].shares.push({ email: s.email, role: s.role });
   }
+  for (const c of currencies) {
+    if (meta.items[c.item_id]) meta.items[c.item_id].currency = c.currency;
+  }
   for (const e of entries) {
     const m = meta.items[e.item_id];
     if (!m) continue;
@@ -99,6 +114,7 @@ export function assemble({ items, shares, entries, settings }) {
     incomes,
     incomeRecords,
   };
+  if (sd.currency) raw.currency = sd.currency;
   // Fills in defaults for any missing fields in memory only; nothing is written.
   const { data } = migrateData(raw);
   return { data, meta, hasSettings: !!settings };
@@ -209,8 +225,8 @@ export async function saveChanges(prev, next, meta, userId, deletedIds) {
     }
   }
 
-  const settingsBefore = { people: prev.people, strategy: prev.strategy };
-  const settingsAfter = { people: next.people, strategy: next.strategy };
+  const settingsBefore = { people: prev.people, strategy: prev.strategy, currency: prev.currency };
+  const settingsAfter = { people: next.people, strategy: next.strategy, currency: next.currency };
   if (!same(settingsBefore, settingsAfter)) await saveSettings(settingsAfter, meta, userId);
 }
 
@@ -239,6 +255,14 @@ export async function addShare(itemId, email, role) {
 }
 export async function removeShare(itemId, email) {
   check(await supabase.from("item_shares").delete().eq("item_id", itemId).eq("email", email));
+}
+
+// ---- Deleting an account ----
+// Removes everything the signed-in person owns and their sign-in, in one step
+// that either fully happens or doesn't happen at all (see delete_my_account in
+// accounts-setup.sql).
+export async function deleteMyAccount() {
+  check(await supabase.rpc("delete_my_account"));
 }
 
 // ---- Recently deleted and history ----

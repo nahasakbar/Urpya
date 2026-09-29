@@ -55,6 +55,12 @@ describe("activity sentences", () => {
       .toBe("updated their budget and settings");
   });
 
+  it("shows an item's amounts in its own currency when asked", () => {
+    const h = { ...base, table_name: "entries", action: "insert", item_id: "r1", month: "2026-09", new_data: { data: { amounts: { Riyas: 900 } } } };
+    expect(describeChange(h, { now, names: { r1: "Car loan" }, currencyOf: () => "AED" }).text).toBe("recorded AED 900 for “Car loan” · Sept 2026");
+    expect(describeChange(h, { now, names: { r1: "Car loan" } }).text).toBe("recorded ₹900 for “Car loan” · Sept 2026");
+  });
+
   it("says roughly when", () => {
     expect(timeAgo("2026-09-29T11:59:50Z", now)).toBe("just now");
     expect(timeAgo("2026-09-29T09:00:00Z", now)).toBe("3 hr ago");

@@ -7,9 +7,58 @@ export function uid(prefix) {
   return prefix + "-" + Math.random().toString(36).slice(2, 9);
 }
 
-export function fmt(n) {
+// Each person picks the currency their amounts are in (Account → Currency).
+// Only the symbol and number grouping change; amounts are never converted.
+// `step` is what the debt-free goal rounds its budget up to.
+export const CURRENCIES = [
+  { code: "INR", symbol: "₹", locale: "en-IN", name: "Indian rupee", step: 100 },
+  { code: "AED", symbol: "AED ", locale: "en-US", name: "UAE dirham", step: 10 },
+  { code: "SAR", symbol: "SAR ", locale: "en-US", name: "Saudi riyal", step: 10 },
+  { code: "QAR", symbol: "QAR ", locale: "en-US", name: "Qatari riyal", step: 10 },
+  { code: "KWD", symbol: "KWD ", locale: "en-US", name: "Kuwaiti dinar", step: 10 },
+  { code: "OMR", symbol: "OMR ", locale: "en-US", name: "Omani rial", step: 10 },
+  { code: "BHD", symbol: "BHD ", locale: "en-US", name: "Bahraini dinar", step: 10 },
+  { code: "PKR", symbol: "Rs ", locale: "en-IN", name: "Pakistani rupee", step: 100 },
+  { code: "BDT", symbol: "৳", locale: "en-IN", name: "Bangladeshi taka", step: 100 },
+  { code: "NPR", symbol: "Rs ", locale: "en-IN", name: "Nepalese rupee", step: 100 },
+  { code: "LKR", symbol: "Rs ", locale: "en-US", name: "Sri Lankan rupee", step: 100 },
+  { code: "USD", symbol: "$", locale: "en-US", name: "US dollar", step: 10 },
+  { code: "GBP", symbol: "£", locale: "en-GB", name: "British pound", step: 10 },
+  { code: "EUR", symbol: "€", locale: "en-IE", name: "Euro", step: 10 },
+  { code: "CAD", symbol: "C$", locale: "en-US", name: "Canadian dollar", step: 10 },
+  { code: "AUD", symbol: "A$", locale: "en-US", name: "Australian dollar", step: 10 },
+  { code: "SGD", symbol: "S$", locale: "en-US", name: "Singapore dollar", step: 10 },
+  { code: "MYR", symbol: "RM ", locale: "en-US", name: "Malaysian ringgit", step: 10 },
+];
+
+// Accounts made before currencies existed are in rupees.
+export const DEFAULT_CURRENCY = "INR";
+
+export function currencyInfo(code) {
+  return CURRENCIES.find((c) => c.code === code) || CURRENCIES[0];
+}
+
+// The currency `fmt` uses: the signed-in person's, set by the app as it draws.
+let current = currencyInfo(DEFAULT_CURRENCY);
+export function setCurrency(code) {
+  current = currencyInfo(code);
+}
+export function currentCurrency() {
+  return current;
+}
+// For form labels: "₹", "AED", "$".
+export function currencySymbol() {
+  return current.symbol.trim();
+}
+
+export function fmtIn(n, code) {
+  const c = currencyInfo(code);
   const v = Math.round(Number(n) || 0);
-  return "₹" + v.toLocaleString("en-IN");
+  return c.symbol + v.toLocaleString(c.locale);
+}
+
+export function fmt(n) {
+  return fmtIn(n, current.code);
 }
 
 export function pad2(n) {
@@ -613,15 +662,16 @@ export function shareLabel(share) {
   return `${Math.round(share * 1000) / 10}% of its profit`;
 }
 
-// The smallest monthly budget (rounded up to the next ₹100) that clears every
-// loan within `targetMonths` under the given strategy. Only runs
+// The smallest monthly budget (rounded up to the next `step`: ₹100, or 10 in
+// most other currencies) that clears every loan within `targetMonths` under
+// the given strategy. Only runs
 // simulateStrategy — it doesn't change it. If even paying everything off at
 // once can't get there (a repayment plan runs on its own schedule), returns
 // { possible: false, soonest } with the soonest achievable month count.
 // `budgetRise(m)` (optional) is how much more than this month's budget month m
 // will have — from income shares that grow over time. The answer is then the
 // budget needed *now*, with those rises still to come on top.
-export function budgetForTarget(loans, strategyType, targetMonths, budgetRise = null) {
+export function budgetForTarget(loans, strategyType, targetMonths, budgetRise = null, step = 100) {
   const withRise = (budget) => (budgetRise ? (m) => budget + budgetRise(m) : budget);
   const meetsTarget = (budget) => {
     const r = simulateStrategy(loans, strategyType, withRise(budget));
@@ -653,6 +703,6 @@ export function budgetForTarget(loans, strategyType, targetMonths, budgetRise = 
     if (meetsTarget(mid)) hi = mid;
     else lo = mid;
   }
-  const rounded = Math.ceil(hi / 100) * 100;
+  const rounded = Math.ceil(hi / step) * step;
   return { possible: true, budget: meetsTarget(rounded) ? rounded : hi };
 }

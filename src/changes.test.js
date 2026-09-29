@@ -29,6 +29,9 @@ describe("Undo", () => {
 
     const budget = { ...base, strategy: { budget: 5, type: "snowball" } };
     expect(undoOf(base, budget, budget)).toEqual(base);
+
+    const currency = { ...base, currency: "AED" };
+    expect(undoOf(base, currency, currency)).toEqual({ ...base, currency: undefined });
   });
 
   it("leaves alone anything someone else changed in the meantime", () => {

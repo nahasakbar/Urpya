@@ -22,6 +22,10 @@ import {
   budgetTotal,
   shareLabel,
   monthKeyAdd,
+  fmt,
+  fmtIn,
+  setCurrency,
+  currencySymbol,
 } from "./calc.js";
 
 const sum = (a) => a.reduce((s, v) => s + v, 0);
@@ -211,6 +215,24 @@ describe("Strategy", () => {
     }
   });
 
+  it("rounds the goal budget to 10 in currencies that use a step of 10", () => {
+    const g = seeded(5);
+    for (let t = 0; t < 60; t++) {
+      const loans = randomLoans(g, { plans: false });
+      const type = g.pick(["avalanche", "snowball"]);
+      const target = g.pick([12, 24, 60]);
+      const r = budgetForTarget(loans, type, target, null, 10);
+      if (!r.possible) continue;
+      const meets = (b) => {
+        const x = simulateStrategy(loans, type, b);
+        return x.feasible && x.months <= target;
+      };
+      expect(meets(r.budget)).toBe(true);
+      expect(meets(r.budget - 10)).toBe(false);
+      expect(r.budget % 10).toBe(0);
+    }
+  });
+
   it("says ₹0 when rising income alone meets the goal", () => {
     const small = [{ id: "s", rate: 0, balance: 1000, currentInterest: 0, minPayment: 0, protectFromGrowth: false, schedule: null }];
     expect(budgetForTarget(small, "avalanche", 24, (m) => (m > 12 ? 5000 : 0))).toEqual({ possible: true, budget: 0 });
@@ -221,6 +243,23 @@ describe("Strategy", () => {
     const r = simulateStatusQuo([l]);
     expect(r.payoffMonth.x).toBe(1);
     expect(r.totalInterest).toBe(0);
+  });
+});
+
+describe("currency", () => {
+  it("shows rupees by default, and each person's chosen currency", () => {
+    expect(fmt(1234567)).toBe("₹12,34,567");
+    expect(currencySymbol()).toBe("₹");
+    setCurrency("AED");
+    try {
+      expect(fmt(1234567.4)).toBe("AED 1,234,567");
+      expect(currencySymbol()).toBe("AED");
+      expect(fmtIn(1500, "INR")).toBe("₹1,500");
+    } finally {
+      setCurrency("INR");
+    }
+    expect(fmtIn(99, "XYZ")).toBe("₹99");
+    expect(fmt(0)).toBe("₹0");
   });
 });
 

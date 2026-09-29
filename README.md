@@ -17,6 +17,9 @@ database.
   save can be undone, and deleted items can be restored.
 - Access rules in the database make sure people only ever see their own items
   and what's been shared with them. Signed-out visitors see nothing.
+- Anyone can sign up. Each person picks their currency (it only changes the
+  symbol; nothing is converted), can read a plain privacy note, download a
+  backup, and delete their account and everything they own.
 - The calculations are checked by automatic tests (`npm test`), which also run
   before every build — a change that breaks the sums can't be deployed.
 
@@ -70,6 +73,36 @@ Supabase also caps how many sign-in emails go out per hour (you can raise
 it under **Authentication → Rate Limits**). If none arrive at all, recheck the
 SMTP settings from step 2; the Gmail account's inbox may also have a
 warning from Google.
+
+## Opening it to everyone
+
+For when people outside the family start using it:
+
+1. **Update the database.** Run the whole of `supabase/accounts-setup.sql`
+   again (SQL Editor → New query → paste → Run). It's safe to run again; this
+   adds "Delete my account" and currencies for shared items.
+2. **Protect your Gmail.** While codes are sent from your Gmail, strangers
+   could make it send lots of emails. In Supabase, open **Authentication →
+   Rate Limits** and set the limit for sending emails to about 20 an hour.
+3. **Turn on the robot check** (Cloudflare Turnstile, free, no domain needed):
+   - At [dash.cloudflare.com](https://dash.cloudflare.com) (free account),
+     open **Turnstile → Add widget**. Name it `Ledger`, add your app's web
+     address (e.g. `yourapp.vercel.app`) as the hostname, choose
+     **Managed**, and create it. It gives a **Site key** and a **Secret key**.
+   - The app needs the **Site key** (it isn't secret). Ledger's is already in
+     `src/App.jsx` (`LEDGER_TURNSTILE_KEY`); a Vercel environment variable
+     `VITE_TURNSTILE_SITE_KEY` would override it. On this computer
+     (localhost) the check is off.
+   - Open the live app's sign-in screen. If it says "The robot check couldn't
+     run here", the web address is missing from the widget's hostnames in
+     Cloudflare. Once there's no such message and you can sign in, then, and
+     only then, in Supabase open
+     **Authentication → Attack Protection** (called "Bot and Abuse Protection"
+     in some versions), switch on **CAPTCHA protection**, choose
+     **Turnstile**, paste the **Secret key** and save. Doing this before the
+     app has the site key would stop everyone signing in.
+4. **Later, with a domain:** a proper email sender (e.g. Resend) can replace
+   Gmail. Then update the privacy note's line about Gmail.
 
 ## Setting up from scratch
 

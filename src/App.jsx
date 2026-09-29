@@ -19,6 +19,7 @@ import {
   Download,
   RotateCcw,
   Mail,
+  Shield,
 } from "lucide-react";
 import { supabase } from "./supabaseClient.js";
 import * as store from "./store.js";
@@ -28,6 +29,12 @@ import { describeChange } from "./activity.js";
 import {
   uid,
   fmt,
+  fmtIn,
+  setCurrency,
+  currencySymbol,
+  currencyInfo,
+  CURRENCIES,
+  DEFAULT_CURRENCY,
   pad2,
   currentMonthKey,
   monthKeyAdd,
@@ -221,7 +228,7 @@ function LenderForm({ initial, onSave, onCancel, inSheet }) {
       </div>
 
       <div className="fl-field">
-        <label>Total amount borrowed (₹)</label>
+        <label>Total amount borrowed ({currencySymbol()})</label>
         <input
           type="number"
           inputMode="decimal"
@@ -273,7 +280,7 @@ function LenderForm({ initial, onSave, onCancel, inSheet }) {
 
       {hasPlan && (
         <div className="fl-field">
-          <label>Total to repay (₹)</label>
+          <label>Total to repay ({currencySymbol()})</label>
           <input
             type="number"
             inputMode="decimal"
@@ -323,7 +330,7 @@ function LenderForm({ initial, onSave, onCancel, inSheet }) {
           <p className="fl-card-sub">
             Don’t let this debt grow while it waits its turn. In the Strategy plan, it will always get at least that
             month’s interest — recalculated off its real balance each month — even on a month the plan would
-            otherwise send it ₹0.
+            otherwise send it {fmt(0)}.
           </p>
         </div>
       )}
@@ -397,7 +404,7 @@ function LenderForm({ initial, onSave, onCancel, inSheet }) {
 
       {hasPlan && (
         <div className="fl-field">
-          <label>First month’s payment (₹)</label>
+          <label>First month’s payment ({currencySymbol()})</label>
           <input
             type="number"
             inputMode="decimal"
@@ -456,7 +463,7 @@ function LenderForm({ initial, onSave, onCancel, inSheet }) {
       {!hasPlan && (
         <div className="fl-field">
           <label>
-            {type === "fixed" ? "Monthly payment (₹) — leave 0 if flexible" : "Minimum monthly payment (₹) — leave 0 if flexible"}
+            {type === "fixed" ? "Monthly payment" : "Minimum monthly payment"} ({currencySymbol()}) — leave 0 if flexible
           </label>
           <input
             type="number"
@@ -586,7 +593,7 @@ function MonthEntryForm({ people, monthKey, onMonthKeyChange, defaults, isExisti
       )}
       {people.map((p) => (
         <div className="fl-field" key={p}>
-          <label>{p}’s contribution (₹)</label>
+          <label>{p}’s contribution ({currencySymbol()})</label>
           <input
             type="number"
             inputMode="decimal"
@@ -726,7 +733,7 @@ function BudgetEditor({ initialParts, incomes, people, asOfKey, onSave, onCancel
                 inputMode="decimal"
                 value={p.amountText}
                 onChange={(e) => update(i, { amountText: e.target.value })}
-                placeholder="Amount each month (₹)"
+                placeholder={`Amount each month (${currencySymbol()})`}
                 style={{ marginTop: 8 }}
               />
             </div>
@@ -954,12 +961,12 @@ function IncomeForm({ initial, onSave, onCancel, inSheet }) {
       </div>
 
       <div className="fl-field">
-        <label>Capital put in (₹) — leave 0 if none</label>
+        <label>Capital put in ({currencySymbol()}) — leave 0 if none</label>
         <input type="number" inputMode="decimal" value={capital} onChange={(e) => setCapital(e.target.value)} placeholder="0" />
       </div>
 
       <div className="fl-field">
-        <label>Usual monthly income (₹)</label>
+        <label>Usual monthly income ({currencySymbol()})</label>
         <input
           type="number"
           inputMode="decimal"
@@ -1047,7 +1054,7 @@ function IncomeForm({ initial, onSave, onCancel, inSheet }) {
       )}
 
       <div className="fl-field">
-        <label>Usual monthly expenses (₹)</label>
+        <label>Usual monthly expenses ({currencySymbol()})</label>
         <input
           type="number"
           inputMode="decimal"
@@ -1128,11 +1135,11 @@ function IncomeMonthForm({ monthKey, onMonthKeyChange, defaults, isExisting, onS
       )}
 
       <div className="fl-field">
-        <label>Income (₹)</label>
+        <label>Income ({currencySymbol()})</label>
         <input type="number" inputMode="decimal" value={income} onChange={(e) => setIncome(e.target.value)} />
       </div>
       <div className="fl-field">
-        <label>Expenses (₹)</label>
+        <label>Expenses ({currencySymbol()})</label>
         <input type="number" inputMode="decimal" value={expenses} onChange={(e) => setExpenses(e.target.value)} />
         <p className="fl-card-sub" style={{ marginTop: 6, color: profit < 0 ? "var(--maroon)" : "var(--forest)" }}>
           {profit < 0 ? `Loss ${fmt(-profit)}` : `Profit ${fmt(profit)}`}
@@ -1309,26 +1316,223 @@ function ConfirmTextButton({ label, confirmLabel, onConfirm }) {
   );
 }
 
+function CurrencySelect({ value, onChange }) {
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} aria-label="Currency">
+      {CURRENCIES.map((c) => (
+        <option key={c.code} value={c.code}>
+          {c.symbol.trim()} · {c.name} ({c.code})
+        </option>
+      ))}
+    </select>
+  );
+}
+
+// The first steps for someone new: on the welcome screen and an empty Dashboard.
+function GettingStartedSteps() {
+  return (
+    <ol className="fl-steps">
+      <li>
+        <strong>Add your debts</strong> — loans, credit cards, money borrowed from family. Debts tab, then +.
+      </li>
+      <li>
+        <strong>Record payments</strong> as you make them — tap a debt’s due tag on the Dashboard.
+      </li>
+      <li>
+        <strong>Add your income</strong> — salary, a business, rent. Income tab, then +.
+      </li>
+      <li>
+        <strong>Make a plan</strong> — on the Strategy tab, set what you can put toward debts each month and see when
+        you’ll be debt-free.
+      </li>
+      <li>
+        <strong>Share</strong> any debt or income source with family from its page, if you manage it together.
+      </li>
+    </ol>
+  );
+}
+
+// In plain words: what's kept, who sees it, and how to take it or delete it.
+function PrivacyNote() {
+  return (
+    <div className="fl-prose">
+      <p className="fl-panel-title fl-serif">What Ledger keeps</p>
+      <p>
+        Your email address, so you can sign in, and what you type in: debts, payments, income, your budget and the
+        names you add. Nothing else — no contacts, no location and no bank connection.
+      </p>
+      <p className="fl-panel-title fl-serif">Who can see it</p>
+      <p>
+        Only you — plus anyone you share a particular debt or income source with, who sees just that item, its
+        monthly entries and its history. Signed-out visitors see nothing.
+      </p>
+      <p>
+        Everything is stored with Supabase, a database hosting company, and sign-in codes are sent through Gmail. The
+        person who runs Ledger can reach the database, as with any website, but doesn’t look at or share what’s in
+        it. There are no ads, and nothing is sold or used to track you.
+        {TURNSTILE_SITE_KEY && " The sign-in page uses Cloudflare Turnstile to check you’re a person, not a bot."}
+      </p>
+      <p className="fl-panel-title fl-serif">Your data, your choice</p>
+      <p>
+        Account → Download a backup gives you a copy of everything, any time. Account → Delete my account removes
+        your account and everything you own, straight away. Items other people shared with you stay theirs,
+        including anything you recorded on them.
+      </p>
+      <p className="fl-panel-title fl-serif">Not financial advice</p>
+      <p>
+        Balances, plans and dates are worked out from what you enter, to help you think things through. Check
+        anything important with your lender.
+      </p>
+      <p className="fl-panel-title fl-serif">Questions</p>
+      <p>Reply to any sign-in email from Ledger.</p>
+    </div>
+  );
+}
+
+// "Delete my account" — asks for DELETE to be typed, since it can't be undone.
+function DeleteAccountPanel({ onDelete }) {
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const ready = typed.trim().toUpperCase() === "DELETE";
+  return (
+    <div className="fl-panel">
+      <p className="fl-card-sub" style={{ marginBottom: 10 }}>
+        Deletes your account and everything you own in Ledger: every debt and income source, all their monthly
+        entries and history, and your settings. People you’ve shared them with lose them too. This can’t be undone,
+        so download a backup first if you might want it.
+      </p>
+      <div className="fl-field">
+        <label>Type DELETE to confirm</label>
+        <input
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          autoCapitalize="characters"
+          autoCorrect="off"
+          autoComplete="off"
+          placeholder="DELETE"
+        />
+      </div>
+      <div className="fl-form-actions">
+        <button
+          className="fl-btn danger"
+          disabled={!ready || busy}
+          onClick={async () => {
+            setBusy(true);
+            if (!(await onDelete())) setBusy(false);
+          }}
+        >
+          <Trash2 size={14} /> {busy ? "Deleting…" : "Delete my account"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Cloudflare Turnstile, the robot check on the sign-in screen. The site key is
+// public (it's in every visitor's page); its secret half lives only in
+// Supabase → Authentication → Attack Protection, which then refuses code
+// requests without a passed check. Off on this computer (localhost isn't one
+// of the widget's hostnames); VITE_TURNSTILE_SITE_KEY overrides it, e.g. with
+// Cloudflare's always-pass test key for local testing.
+const LEDGER_TURNSTILE_KEY = "0x4AAAAAAFJk5k_Kq87TX9qt";
+const onLocalhost =
+  typeof window !== "undefined" && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
+const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY || (onLocalhost ? "" : LEDGER_TURNSTILE_KEY);
+
+let turnstileLoading = null;
+function loadTurnstile() {
+  if (window.turnstile) return Promise.resolve(window.turnstile);
+  if (!turnstileLoading) {
+    turnstileLoading = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      script.onload = () => (window.turnstile ? resolve(window.turnstile) : reject(new Error("Turnstile missing")));
+      script.onerror = () => {
+        turnstileLoading = null;
+        reject(new Error("Turnstile didn’t load"));
+      };
+      document.head.appendChild(script);
+    });
+  }
+  return turnstileLoading;
+}
+
+// Gives a fresh pass token for each code request. The check is invisible
+// unless Cloudflare wants a tap. `failed` is Cloudflare's error code, if any.
+function useTurnstile(siteKey) {
+  const boxRef = useRef(null);
+  const widgetRef = useRef(null);
+  const [token, setToken] = useState(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (!siteKey) return;
+    let cancelled = false;
+    loadTurnstile().then(
+      (ts) => {
+        if (cancelled || !boxRef.current) return;
+        widgetRef.current = ts.render(boxRef.current, {
+          sitekey: siteKey,
+          theme: "light",
+          appearance: "interaction-only",
+          callback: (t) => {
+            setToken(t);
+            setFailed(false);
+          },
+          "expired-callback": () => setToken(null),
+          "error-callback": (code) => {
+            setToken(null);
+            setFailed(String(code || "unknown"));
+          },
+        });
+      },
+      () => !cancelled && setFailed("didn’t load")
+    );
+    return () => {
+      cancelled = true;
+      if (widgetRef.current != null && window.turnstile) window.turnstile.remove(widgetRef.current);
+      widgetRef.current = null;
+    };
+  }, [siteKey]);
+  // A pass can only be used once, so each request needs a new one.
+  function reset() {
+    setToken(null);
+    if (widgetRef.current != null && window.turnstile) window.turnstile.reset(widgetRef.current);
+  }
+  return { enabled: !!siteKey, boxRef, token, failed, reset };
+}
+
 // Sign in with a 6-digit code sent by email — no password, and it works inside
 // the Home Screen app (a sign-in link would open Safari instead).
-function SignIn() {
+function SignIn({ notice }) {
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [stage, setStage] = useState("email");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [showPrivacy, setShowPrivacy] = useState(false);
+  const bot = useTurnstile(TURNSTILE_SITE_KEY);
+  const waitingForBot = bot.enabled && !bot.token;
 
   async function sendCode() {
     const addr = email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return setError("Enter your email address.");
+    // If the check couldn't run, ask anyway: Supabase decides whether a
+    // request without a pass is allowed.
+    if (waitingForBot && !bot.failed) return setError("One moment — just checking you’re a person, not a bot.");
     setBusy(true);
     setError("");
-    const { error: err } = await supabase.auth.signInWithOtp({ email: addr, options: { shouldCreateUser: true } });
+    const options = { shouldCreateUser: true };
+    if (bot.token) options.captchaToken = bot.token;
+    const { error: err } = await supabase.auth.signInWithOtp({ email: addr, options });
+    if (bot.enabled) bot.reset();
     setBusy(false);
     if (err) {
       console.error("send code failed", err);
+      const msg = err.message || "";
       setError(
-        /rate|seconds|many/i.test(err.message || "")
+        /captcha/i.test(msg)
+          ? "The robot check didn’t go through — reload the page and try again."
+          : /rate|seconds|many/i.test(msg)
           ? "Too many codes asked for just now — wait a minute and try again."
           : "Couldn’t send the code — check the email and your connection."
       );
@@ -1366,6 +1570,11 @@ function SignIn() {
         </div>
       </div>
       <div className="fl-content">
+        {notice && (
+          <div className="fl-panel" style={{ marginTop: 8 }}>
+            <p className="fl-card-sub">{notice}</p>
+          </div>
+        )}
         <div className="fl-panel" style={{ marginTop: 8 }}>
           {stage === "email" ? (
             <>
@@ -1388,8 +1597,8 @@ function SignIn() {
                 We’ll email you a code to sign in. No password needed. New here? The same code creates your account.
               </p>
               <div className="fl-form-actions">
-                <button className="fl-btn" onClick={sendCode} disabled={busy}>
-                  {busy ? "Sending…" : "Email me a code"}
+                <button className="fl-btn" onClick={sendCode} disabled={busy || (waitingForBot && !bot.failed)}>
+                  {busy ? "Sending…" : waitingForBot && !bot.failed ? "One moment…" : "Email me a code"}
                 </button>
               </div>
             </>
@@ -1427,7 +1636,7 @@ function SignIn() {
                   {busy ? "Checking…" : "Sign in"}
                 </button>
               </div>
-              <button className="fl-link" style={{ marginTop: 12 }} onClick={sendCode} disabled={busy}>
+              <button className="fl-link" style={{ marginTop: 12 }} onClick={sendCode} disabled={busy || (waitingForBot && !bot.failed)}>
                 Send a new code
               </button>
             </>
@@ -1437,8 +1646,24 @@ function SignIn() {
               <AlertCircle size={12} /> {error}
             </p>
           )}
+          {bot.enabled && <div className="fl-turnstile" ref={bot.boxRef} />}
+          {bot.failed && (
+            <p className="fl-card-sub" style={{ marginTop: 10 }}>
+              The robot check couldn’t run here (error {bot.failed}).
+            </p>
+          )}
         </div>
+        <p className="fl-signin-links">
+          <button className="fl-link" onClick={() => setShowPrivacy(true)}>
+            Privacy — what’s kept and who can see it
+          </button>
+        </p>
       </div>
+      {showPrivacy && (
+        <Sheet title="Privacy" onClose={() => setShowPrivacy(false)}>
+          <PrivacyNote />
+        </Sheet>
+      )}
     </div>
   );
 }
@@ -1446,6 +1671,7 @@ function SignIn() {
 // Signed-in person → their ledger; otherwise the sign-in screen.
 export default function App() {
   const [session, setSession] = useState(undefined);
+  const [notice, setNotice] = useState("");
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
@@ -1459,11 +1685,17 @@ export default function App() {
       </div>
     );
   }
-  if (!session) return <SignIn />;
-  return <Ledger key={session.user.id} user={session.user} />;
+  if (!session) return <SignIn notice={notice} />;
+  return (
+    <Ledger
+      key={session.user.id}
+      user={session.user}
+      onAccountDeleted={() => setNotice("Your account and everything in it has been deleted.")}
+    />
+  );
 }
 
-function Ledger({ user }) {
+function Ledger({ user, onAccountDeleted }) {
   const myEmail = (user.email || "").toLowerCase();
   // A starting name for recording payments: the first part of the email.
   const myName = (() => {
@@ -1509,6 +1741,8 @@ function Ledger({ user }) {
   const [recordTarget, setRecordTarget] = useState(null);
   const [activity, setActivity] = useState(null);
   const [deletedItems, setDeletedItems] = useState(null);
+  const [welcomeCurrency, setWelcomeCurrency] = useState(DEFAULT_CURRENCY);
+  const [showPrivacy, setShowPrivacy] = useState(false);
 
   async function reload() {
     try {
@@ -1621,7 +1855,27 @@ function Ledger({ user }) {
 
   if (!data) return null;
 
-  const lenders = data.lenders;
+  // Amounts show in the person's own currency (only the symbol; nothing is
+  // converted). An item shared with you is in its owner's currency; one that
+  // differs from yours is left out of your lists and totals, and listed with
+  // a note instead, so two currencies are never added together.
+  const myCurrency = data.currency || DEFAULT_CURRENCY;
+  setCurrency(myCurrency);
+  function itemCurrency(id) {
+    const m = metaRef.current.items[id];
+    if (!m || m.ownerId === user.id) return myCurrency;
+    return m.currency || DEFAULT_CURRENCY;
+  }
+  const otherCurrencyItems = [
+    ...data.lenders.map((x) => ({ kind: "debt", id: x.id, name: x.name })),
+    ...(data.incomes || []).map((x) => ({ kind: "income", id: x.id, name: x.name })),
+  ]
+    .filter((x) => itemCurrency(x.id) !== myCurrency)
+    .map((x) => ({ ...x, currency: itemCurrency(x.id), ownerEmail: (metaRef.current.items[x.id] || {}).ownerEmail || "" }));
+
+  // Everything below (lists, totals, Strategy) uses these. Saves build on the
+  // full data.lenders / data.incomes, so hidden items are never dropped.
+  const lenders = data.lenders.filter((l) => itemCurrency(l.id) === myCurrency);
   const people = data.people;
   const payments = data.payments;
   const asOfKey = currentMonthKey();
@@ -1682,7 +1936,7 @@ function Ledger({ user }) {
   const overallPct = totalAmount > 0 ? Math.max(Math.min(totalPaid / totalAmount, 1), 0) : 0;
 
   // Income sources: kept apart from the debts, and never part of their maths.
-  const incomes = data.incomes || [];
+  const incomes = (data.incomes || []).filter((s) => itemCurrency(s.id) === myCurrency);
   const incomeRecords = data.incomeRecords || {};
   const incomeSummaries = incomes.map((s) => ({ ...s, stats: computeIncome(s, incomeRecords[s.id], asOfKey) }));
   const selectedIncome = incomeSummaries.find((s) => s.id === selectedIncomeId) || null;
@@ -1789,7 +2043,8 @@ function Ledger({ user }) {
           strategyLoans,
           strategy.type,
           goalMonths,
-          budgetRises ? (m) => budgetByMonth[Math.min(m, 600) - 1] - effectiveBudget : null
+          budgetRises ? (m) => budgetByMonth[Math.min(m, 600) - 1] - effectiveBudget : null,
+          currencyInfo(myCurrency).step
         )
       : null;
   const byMonth = (months) => monthKeyShort(monthKeyAdd(asOfKey, months - 1));
@@ -1874,12 +2129,12 @@ function Ledger({ user }) {
 
   function addLoan(fields) {
     const newLoan = { id: store.newId(), position: Date.now(), ...fields };
-    persist({ ...data, lenders: [...lenders, newLoan] }, { message: "Debt added" });
+    persist({ ...data, lenders: [...data.lenders, newLoan] }, { message: "Debt added" });
     setShowAddLoan(false);
   }
 
   function updateLoan(id, fields) {
-    const nextLenders = lenders.map((l) => (l.id === id ? { ...l, ...fields } : l));
+    const nextLenders = data.lenders.map((l) => (l.id === id ? { ...l, ...fields } : l));
     persist({ ...data, lenders: nextLenders });
     setEditingLoanId(null);
   }
@@ -1887,7 +2142,7 @@ function Ledger({ user }) {
   // Deleting keeps the monthly entries, so Undo or "Recently deleted" can bring
   // the debt back complete.
   function deleteLoan(id) {
-    persist({ ...data, lenders: lenders.filter((l) => l.id !== id) }, { message: "Deleted" });
+    persist({ ...data, lenders: data.lenders.filter((l) => l.id !== id) }, { message: "Deleted" });
     if (selectedLoanId === id) {
       setSelectedLoanId(null);
       setView("loans");
@@ -1928,17 +2183,17 @@ function Ledger({ user }) {
   const selectedLoan = lenders.find((l) => l.id === selectedLoanId) || null;
 
   function addIncome(fields) {
-    persist({ ...data, incomes: [...incomes, { id: store.newId(), position: Date.now(), ...fields }] }, { message: "Income source added" });
+    persist({ ...data, incomes: [...(data.incomes || []), { id: store.newId(), position: Date.now(), ...fields }] }, { message: "Income source added" });
     setShowAddIncome(false);
   }
 
   function updateIncome(id, fields) {
-    persist({ ...data, incomes: incomes.map((s) => (s.id === id ? { ...s, ...fields } : s)) });
+    persist({ ...data, incomes: (data.incomes || []).map((s) => (s.id === id ? { ...s, ...fields } : s)) });
     setEditingIncomeId(null);
   }
 
   function deleteIncome(id) {
-    const next = { ...data, incomes: incomes.filter((s) => s.id !== id) };
+    const next = { ...data, incomes: (data.incomes || []).filter((s) => s.id !== id) };
     if (Array.isArray(strategy.budgetParts)) {
       const parts = strategy.budgetParts.filter((p) => !(p.kind === "income" && p.incomeId === id));
       next.strategy = { ...strategy, budgetParts: parts, budget: budgetTotal(parts, incomesById, asOfKey) };
@@ -2050,9 +2305,13 @@ function Ledger({ user }) {
     }
   }
 
-  async function startFresh() {
+  async function startFresh(currency = DEFAULT_CURRENCY) {
     try {
-      await store.saveSettings({ people: [myName], strategy: { budget: 0, type: "avalanche" } }, metaRef.current, user.id);
+      await store.saveSettings(
+        { people: [myName], strategy: { budget: 0, type: "avalanche" }, currency },
+        metaRef.current,
+        user.id
+      );
       await reload();
     } catch (e) {
       console.error("start failed", e);
@@ -2061,6 +2320,27 @@ function Ledger({ user }) {
   }
 
   // ---- Account tools ----
+  function changeCurrency(code) {
+    if (code === myCurrency) return;
+    persist({ ...data, currency: code }, { message: `Currency: ${currencyInfo(code).name}` });
+  }
+
+  // Waits for any save still going, then deletes everything in one step. Only
+  // signs out once the database confirms the deletion.
+  async function deleteAccount() {
+    try {
+      await saveQueue.current;
+      await store.deleteMyAccount();
+    } catch (e) {
+      console.error("delete account failed", e);
+      showToast("Couldn’t delete your account — nothing was removed. Check your connection and try again.", null, 6000);
+      return false;
+    }
+    onAccountDeleted();
+    await supabase.auth.signOut({ scope: "local" }).catch((e) => console.error("sign out failed", e));
+    return true;
+  }
+
   async function loadAccountLists() {
     try {
       const [hist, gone] = await Promise.all([store.loadHistory(60), store.loadDeleted()]);
@@ -2160,6 +2440,26 @@ function Ledger({ user }) {
     return { amounts: null, note: null };
   }
 
+  // Items shared with you in a currency other than yours: named, not added in.
+  function otherCurrencyNote(items) {
+    if (items.length === 0) return null;
+    return (
+      <div className="fl-panel">
+        <p className="fl-panel-title fl-serif">Shared with you in another currency</p>
+        {items.map((x) => (
+          <p className="fl-card-sub" key={x.id} style={{ margin: "0 0 4px" }}>
+            “{x.name}” from {x.ownerEmail.split("@")[0]} · {x.currency}
+          </p>
+        ))}
+        <p className="fl-card-sub" style={{ marginTop: 8 }}>
+          Your account is in {currencyInfo(myCurrency).name} ({myCurrency}), so {items.length === 1 ? "this isn’t" : "these aren’t"}{" "}
+          shown or added to your totals — amounts in two currencies can’t be added together. To see{" "}
+          {items.length === 1 ? "it" : "them"}, change your currency in Account.
+        </p>
+      </div>
+    );
+  }
+
   // The header's + adds to whichever list is showing: Debts or Income.
   const canAddFromHeader = view === "loans" || view === "income";
 
@@ -2204,7 +2504,10 @@ function Ledger({ user }) {
     .reduce((s, x) => s + (x.status === "short" ? x.short : x.amount || 0), 0);
   const monthPaid = thisMonthItems.filter((x) => x.kind === "debt").reduce((s, x) => s + (x.paid || 0), 0);
   const monthIn = thisMonthItems.filter((x) => x.kind === "income").reduce((s, x) => s + (x.amount || 0), 0);
-  const isEmptyAccount = !hasSettings && lenders.length === 0 && incomes.length === 0;
+  // New: nothing saved yet. (metaRef also notices settings saved since the last
+  // load, e.g. choosing a currency in Account before getting started.)
+  const isEmptyAccount =
+    !hasSettings && metaRef.current.settingsVersion == null && lenders.length === 0 && incomes.length === 0;
 
   return (
     <div className="fl-shell">
@@ -2294,10 +2597,18 @@ function Ledger({ user }) {
                 <p className="fl-card-sub" style={{ marginBottom: 12 }}>
                   {oldImportedBy
                     ? `${oldImportedBy} has already moved the family ledger into their account. Ask them to share the debts and income you look after with ${myEmail} — they’ll appear here. Meanwhile you can add your own.`
-                    : "Add your debts and income sources, and share any of them with the people you manage them with."}
+                    : "Keep track of what you owe and what comes in, and plan the quickest way to be debt-free. Everything you add is private unless you share it."}
+                </p>
+                <GettingStartedSteps />
+                <div className="fl-field">
+                  <label>Your currency</label>
+                  <CurrencySelect value={welcomeCurrency} onChange={setWelcomeCurrency} />
+                </div>
+                <p className="fl-card-sub" style={{ marginBottom: 12 }}>
+                  You can change it later in Account.
                 </p>
                 <div className="fl-form-actions">
-                  <button className="fl-btn" onClick={startFresh}>
+                  <button className="fl-btn" onClick={() => startFresh(welcomeCurrency)}>
                     Get started
                   </button>
                 </div>
@@ -2319,6 +2630,21 @@ function Ledger({ user }) {
             <div className="fl-form-actions" style={{ marginTop: 10 }}>
               <button className="fl-btn secondary" onClick={() => setImportResult(null)}>
                 OK
+              </button>
+            </div>
+          </div>
+        )}
+
+        {view === "dashboard" && !isEmptyAccount && data.lenders.length === 0 && (data.incomes || []).length === 0 && (
+          <div className="fl-panel">
+            <p className="fl-panel-title fl-serif">Getting started</p>
+            <GettingStartedSteps />
+            <div className="fl-form-actions">
+              <button className="fl-btn secondary" onClick={() => setShowAddIncome(true)}>
+                <Plus size={14} /> Income
+              </button>
+              <button className="fl-btn" onClick={() => setShowAddLoan(true)}>
+                <Plus size={14} /> Debt
               </button>
             </div>
           </div>
@@ -2531,6 +2857,8 @@ function Ledger({ user }) {
           </>
         )}
 
+        {view === "dashboard" && otherCurrencyNote(otherCurrencyItems)}
+
         {view === "loans" && (
           <>
             <p className="fl-section-title">Your debts &amp; creditors</p>
@@ -2579,6 +2907,7 @@ function Ledger({ user }) {
             {lenders.length === 0 && (
               <div className="fl-empty">Nothing added yet. Tap + at the top to add a debt.</div>
             )}
+            {otherCurrencyNote(otherCurrencyItems.filter((x) => x.kind === "debt"))}
           </>
         )}
 
@@ -2679,6 +3008,7 @@ function Ledger({ user }) {
                 Nothing added yet. Tap + at the top to add a business, property or other income source.
               </div>
             )}
+            {otherCurrencyNote(otherCurrencyItems.filter((x) => x.kind === "income"))}
           </>
         )}
 
@@ -2870,6 +3200,17 @@ function Ledger({ user }) {
               </div>
             </div>
 
+            <p className="fl-section-title">Currency</p>
+            <div className="fl-panel">
+              <div className="fl-field">
+                <CurrencySelect value={myCurrency} onChange={changeCurrency} />
+              </div>
+              <p className="fl-card-sub">
+                Changes the symbol on all your amounts — nothing is converted. People you share with see your items in
+                this currency.
+              </p>
+            </div>
+
             {oldLedger && (
               <div className="fl-panel">
                 <p className="fl-panel-title fl-serif">The old family ledger is still open</p>
@@ -2942,7 +3283,8 @@ function Ledger({ user }) {
               activity.map((h) => {
                 const d = describeChange(h, {
                   myEmail,
-                  names: Object.fromEntries([...lenders, ...incomes].map((x) => [x.id, x.name])),
+                  names: Object.fromEntries([...data.lenders, ...(data.incomes || [])].map((x) => [x.id, x.name])),
+                  currencyOf: itemCurrency,
                 });
                 return (
                   <div className="fl-activity-row" key={h.id}>
@@ -2984,6 +3326,21 @@ function Ledger({ user }) {
                 </button>
               </div>
             </div>
+
+            <p className="fl-section-title">Privacy</p>
+            <div className="fl-panel">
+              <p className="fl-card-sub" style={{ marginBottom: 10 }}>
+                What Ledger keeps, who can see it, and how to take it with you or delete it.
+              </p>
+              <div className="fl-form-actions">
+                <button className="fl-btn secondary" onClick={() => setShowPrivacy(true)}>
+                  <Shield size={14} /> Read the privacy note
+                </button>
+              </div>
+            </div>
+
+            <p className="fl-section-title">Delete my account</p>
+            <DeleteAccountPanel onDelete={deleteAccount} />
           </>
         )}
 
@@ -3458,6 +3815,12 @@ function Ledger({ user }) {
       {showAddIncome && (
         <Sheet title="Add an income source" onClose={() => setShowAddIncome(false)}>
           <IncomeForm inSheet onCancel={() => setShowAddIncome(false)} onSave={addIncome} />
+        </Sheet>
+      )}
+
+      {showPrivacy && (
+        <Sheet title="Privacy" onClose={() => setShowPrivacy(false)}>
+          <PrivacyNote />
         </Sheet>
       )}
 
