@@ -24,6 +24,7 @@ import {
   monthKeyAdd,
   fmt,
   fmtIn,
+  fmtCompact,
   setCurrency,
   currencySymbol,
 } from "./calc.js";
@@ -238,6 +239,26 @@ describe("Strategy", () => {
     expect(budgetForTarget(small, "avalanche", 24, (m) => (m > 12 ? 5000 : 0))).toEqual({ possible: true, budget: 0 });
   });
 
+  it("records the balance month by month without changing any result", () => {
+    const g = seeded(11);
+    for (let t = 0; t < 120; t++) {
+      const loans = randomLoans(g);
+      const type = g.pick(["avalanche", "snowball"]);
+      const budget = g.pick([10000, 60000, 125000, 400000]);
+      const plain = simulateStrategy(loans.map((l) => ({ ...l })), type, budget);
+      const tracked = simulateStrategy(loans.map((l) => ({ ...l })), type, budget, 600, { track: true });
+      const { balances, ...rest } = tracked;
+      expect(rest).toEqual(plain);
+      if (!plain.feasible) {
+        expect(balances).toBeUndefined();
+        continue;
+      }
+      expect(balances.length).toBe(plain.months);
+      if (plain.months < 600) expect(balances[balances.length - 1]).toBeLessThan(0.5 * loans.length + 0.01);
+      balances.forEach((b) => expect(b).toBeGreaterThanOrEqual(0));
+    }
+  });
+
   it("status quo: month 1 adds no interest", () => {
     const l = { id: "x", rate: 0.12, balance: 10100, currentInterest: 100, currentPayment: 10100, schedule: null };
     const r = simulateStatusQuo([l]);
@@ -260,6 +281,21 @@ describe("currency", () => {
     }
     expect(fmtIn(99, "XYZ")).toBe("₹99");
     expect(fmt(0)).toBe("₹0");
+  });
+
+  it("shortens money for charts: lakh and crore in rupees, k and M elsewhere", () => {
+    expect(fmtCompact(656147)).toBe("₹6.6L");
+    expect(fmtCompact(12500000)).toBe("₹1.3Cr");
+    expect(fmtCompact(15000)).toBe("₹15k");
+    expect(fmtCompact(999)).toBe("₹999");
+    expect(fmtCompact(-2500)).toBe("−₹2.5k");
+    setCurrency("AED");
+    try {
+      expect(fmtCompact(1234567)).toBe("AED 1.2M");
+      expect(fmtCompact(250000)).toBe("AED 250k");
+    } finally {
+      setCurrency("INR");
+    }
   });
 });
 

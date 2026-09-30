@@ -61,6 +61,25 @@ export function fmt(n) {
   return fmtIn(n, current.code);
 }
 
+// Short money for chart axes and tight spots: ₹6.6L, ₹1.2Cr, ₹15k in rupees
+// (lakh and crore, as people there say it), AED 1.2M or $15k elsewhere.
+export function fmtCompact(n) {
+  const v = Math.round(Number(n) || 0);
+  const sign = v < 0 ? "−" : "";
+  const a = Math.abs(v);
+  const sym = current.symbol;
+  const short = (x, unit) => {
+    const r = x >= 100 ? Math.round(x) : Math.round(x * 10) / 10;
+    return sign + sym + String(r) + unit;
+  };
+  const lakhs = current.locale === "en-IN";
+  if (lakhs && a >= 1e7) return short(a / 1e7, "Cr");
+  if (lakhs && a >= 1e5) return short(a / 1e5, "L");
+  if (!lakhs && a >= 1e6) return short(a / 1e6, "M");
+  if (a >= 1e3) return short(a / 1e3, "k");
+  return sign + sym + String(a);
+}
+
 export function pad2(n) {
   return String(n).padStart(2, "0");
 }
@@ -478,7 +497,10 @@ export function month1Interest(l) {
 
 // `budget` is a number, or a function giving month m's budget (m = 1 is this
 // month) when part of it follows income that rises over time.
-export function simulateStrategy(loans, strategyType, budget, maxMonths = 600) {
+// `options.track`: also return `balances`, the total still owed at the end of
+// each simulated month (for the payoff chart). It only records; every other
+// result is identical with or without it.
+export function simulateStrategy(loans, strategyType, budget, maxMonths = 600, options = {}) {
   const budgetFor = typeof budget === "function" ? budget : () => budget;
   let state = loans.map((l) => ({ ...l }));
   // A "protected" loan's real floor for month 1 is whichever is bigger: its stated
@@ -502,6 +524,7 @@ export function simulateStrategy(loans, strategyType, budget, maxMonths = 600) {
   let month = 0;
   const payoffMonth = {};
   let firstMonthPlan = null;
+  const balances = options.track ? [] : null;
 
   while (state.some((l) => l.balance > 0.5) && month < maxMonths) {
     month++;
@@ -560,15 +583,18 @@ export function simulateStrategy(loans, strategyType, budget, maxMonths = 600) {
     });
 
     if (month === 1) firstMonthPlan = plan;
+    if (balances) balances.push(state.reduce((sum, l) => sum + Math.max(l.balance, 0), 0));
   }
 
-  return {
+  const result = {
     feasible: true,
     months: month,
     totalInterest,
     payoffMonth,
     firstMonthPlan: firstMonthPlan || {},
   };
+  if (balances) result.balances = balances;
+  return result;
 }
 
 // What happens if each loan just keeps being paid independently at its
