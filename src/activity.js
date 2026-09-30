@@ -19,8 +19,9 @@ function totalOf(entry) {
 
 // `names` maps item id → name, for changes to entries and shares (whose rows
 // don't carry the item's name); `currencyOf(itemId)` gives an item's currency
-// when it may differ from yours. Returns { who, text, when }.
-export function describeChange(h, { myEmail, names = {}, now = new Date(), currencyOf = null } = {}) {
+// when it may differ from yours; `nameOf(email)` turns an email into a person's
+// name where one is known. Returns { who, text, when }.
+export function describeChange(h, { myEmail, names = {}, now = new Date(), currencyOf = null, nameOf = (e) => e } = {}) {
   const fmt$ = (n) => (currencyOf && h.item_id ? fmtIn(n, currencyOf(h.item_id)) : fmt(n));
   const who = !h.changed_by_email ? "Someone" : h.changed_by_email === myEmail ? "You" : h.changed_by_email;
   const itemData = (h.new_data && h.new_data.data) || (h.old_data && h.old_data.data) || null;
@@ -48,9 +49,10 @@ export function describeChange(h, { myEmail, names = {}, now = new Date(), curre
     else text = `recorded ${fmt$(totalOf(entry))} for ${q} · ${month}`;
   } else if (h.table_name === "item_shares") {
     const share = h.new_data || h.old_data || {};
-    if (h.action === "delete") text = share.email === h.changed_by_email ? `left ${q}` : `stopped sharing ${q} with ${share.email}`;
-    else if (h.action === "update") text = `changed ${share.email}'s access to ${q}`;
-    else text = `shared ${q} with ${share.email}${share.role === "viewer" ? " (view only)" : ""}`;
+    const them = nameOf(share.email);
+    if (h.action === "delete") text = share.email === h.changed_by_email ? `left ${q}` : `stopped sharing ${q} with ${them}`;
+    else if (h.action === "update") text = `changed ${them}'s access to ${q}`;
+    else text = `shared ${q} with ${them}${share.role === "viewer" ? " (view only)" : ""}`;
   } else {
     text = who === "You" ? "updated your budget and settings" : "updated their budget and settings";
   }

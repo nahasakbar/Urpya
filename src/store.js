@@ -38,14 +38,27 @@ async function selectIn(table, column, values) {
 }
 
 export async function loadEverything() {
-  const [items, shares, settings, currencies] = await Promise.all([
+  const [items, shares, settings, currencies, accountNames] = await Promise.all([
     supabase.from("items").select("*").is("deleted_at", null).then(check),
     supabase.from("item_shares").select("*").then(check),
     supabase.from("user_settings").select("*").maybeSingle().then(check),
     loadSharedCurrencies(),
+    loadConnectedNames(),
   ]);
   const entries = items.length ? await selectIn("entries", "item_id", items.map((i) => i.id)) : [];
-  return { items, shares, entries, settings, currencies };
+  return { items, shares, entries, settings, currencies, accountNames };
+}
+
+// The names people gave when they signed up, for those you share with and
+// those who share with you (see connected_names in accounts-setup.sql). If the
+// database hasn't been given this yet, people show under the names you gave.
+async function loadConnectedNames() {
+  const res = await supabase.rpc("connected_names");
+  if (res.error) {
+    console.error("names unavailable", res.error);
+    return [];
+  }
+  return res.data || [];
 }
 
 // The currency of each item shared with you, from its owner's settings. If
@@ -70,12 +83,14 @@ function byPosition(a, b) {
 // Builds the app's in-memory shape from rows, plus `meta`: versions,
 // ownership, sharing and (for items shared with you) the owner's currency per
 // item, kept apart so the data itself is exactly what the calculations expect.
-export function assemble({ items, shares, entries, settings, currencies = [] }) {
+export function assemble({ items, shares, entries, settings, currencies = [], accountNames = [] }) {
   const lenders = [];
   const incomes = [];
   const payments = {};
   const incomeRecords = {};
-  const meta = { items: {}, entries: {}, settingsVersion: settings ? settings.version : null };
+  const meta = { items: {}, entries: {}, settingsVersion: settings ? settings.version : null, accounts: {} };
+  // email → the name they signed up with (null: they have an account, no name).
+  for (const a of accountNames) meta.accounts[String(a.email).toLowerCase()] = a.name || null;
   for (const it of [...items].sort(byPosition)) {
     const obj = { ...it.data, id: it.id };
     if (it.kind === "debt") {

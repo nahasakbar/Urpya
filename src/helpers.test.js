@@ -45,6 +45,8 @@ describe("activity sentences", () => {
       .toBe("You");
     expect(describeChange({ ...base, changed_by_email: "nahas@example.com", table_name: "item_shares", action: "insert", item_id: "d1", new_data: { email: "uppa@example.com", role: "viewer" } }, opts).text)
       .toBe("shared “PNB Housing” with uppa@example.com (view only)");
+    expect(describeChange({ ...base, changed_by_email: "nahas@example.com", table_name: "item_shares", action: "insert", item_id: "d1", new_data: { email: "uppa@example.com", role: "editor" } }, { ...opts, nameOf: (e) => (e === "uppa@example.com" ? "Uppa" : e) }).text)
+      .toBe("shared “PNB Housing” with Uppa");
     expect(describeChange({ ...base, table_name: "item_shares", action: "delete", item_id: "d1", old_data: { email: "riyas@example.com" } }, opts).text)
       .toBe("left “PNB Housing”");
     expect(describeChange({ ...base, table_name: "entries", action: "insert", item_id: "i1", month: "2026-09", new_data: { data: { income: 30000, expenses: 40000 } } }, { now }).text)

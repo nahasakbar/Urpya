@@ -282,6 +282,29 @@ $$;
 revoke execute on function public.shared_item_currencies() from public, anon;
 grant execute on function public.shared_item_currencies() to authenticated;
 
+-- The names people gave when they signed up, for everyone you share something
+-- with and everyone who shares something with you (once they have an
+-- account). Nobody else's, so a name can't be looked up just by typing an
+-- email. `name` is null for an account that has none.
+create or replace function public.connected_names()
+returns table (email text, name text)
+language sql stable security definer set search_path = public as $$
+  with connected as (
+    select s.email
+    from item_shares s join items i on i.id = s.item_id
+    where i.owner_id = auth.uid() and i.deleted_at is null
+    union
+    select i.owner_email
+    from item_shares s join items i on i.id = s.item_id
+    where s.email = current_email() and current_email() <> '' and i.deleted_at is null
+  )
+  select lower(u.email)::text, nullif(trim(u.raw_user_meta_data ->> 'full_name'), '')
+  from connected c join auth.users u on lower(u.email) = c.email
+  where u.id is distinct from auth.uid()
+$$;
+revoke execute on function public.connected_names() from public, anon;
+grant execute on function public.connected_names() to authenticated;
+
 -- "Delete my account": removes everything the signed-in person owns (their
 -- items with every month, share and history row, and their settings), takes
 -- them off items others shared with them, and deletes their sign-in. All or

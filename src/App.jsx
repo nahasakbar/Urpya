@@ -1209,7 +1209,7 @@ function IncomeMonthForm({ monthKey, onMonthKeyChange, defaults, isExisting, onS
 // "shared · 2" on your items that others can see; "from riyas" on items
 // someone has shared with you.
 function SharedChip({ a }) {
-  if (!a.owner) return <span className="fl-chip chip-shared">from {(a.ownerEmail || "").split("@")[0]}</span>;
+  if (!a.owner) return <span className="fl-chip chip-shared">from {(a.ownerName || a.ownerEmail || "").split(/\s+/)[0]}</span>;
   if (a.shares.length) return <span className="fl-chip chip-shared">shared · {a.shares.length}</span>;
   return null;
 }
@@ -1342,7 +1342,7 @@ function SharePanel({ itemName, a, myEmail, people, onAccess, onInvite, onUnshar
       <div className="fl-panel">
         <p className="fl-panel-title">Shared with you</p>
         <p className="fl-card-sub" style={{ marginBottom: 12 }}>
-          {a.ownerEmail} shared this {kindLabel} with you — you can {a.canEdit ? "record and edit" : "only view"} it.
+          {a.ownerName} ({a.ownerEmail}) shared this {kindLabel} with you — you can {a.canEdit ? "record and edit" : "only view"} it.
         </p>
         <div className="fl-form-actions">
           <ConfirmTextButton label="Leave" confirmLabel="Yes, leave" onConfirm={() => onUnshare(myEmail, true)} />
@@ -1535,7 +1535,8 @@ function PrivacyNote() {
       <p className="fl-panel-title fl-serif">Who can see it</p>
       <p>
         Only you — plus anyone you share a particular debt or income source with, who sees just that item, its
-        monthly entries and its history. Signed-out visitors see nothing.
+        monthly entries and its history. The people you share with, and the people who share with you, see the
+        name you signed up with. Signed-out visitors see nothing.
       </p>
       <p>
         Everything is stored with Supabase, a database hosting company, and emails with codes (to confirm your email
@@ -2947,27 +2948,52 @@ function Ledger({ user, onAccountDeleted }) {
     if (!m) return { owner: true, canEdit: true, shares: [], ownerEmail: myEmail };
     const owner = m.ownerId === user.id;
     const mine = m.shares.find((x) => x.email === myEmail);
-    return { owner, canEdit: owner || (mine && mine.role === "editor"), shares: m.shares, ownerEmail: m.ownerEmail, myRole: mine && mine.role };
+    const ownerName = (metaRef.current.accounts || {})[m.ownerEmail] || nameFromEmail(m.ownerEmail);
+    return {
+      owner,
+      canEdit: owner || (mine && mine.role === "editor"),
+      shares: m.shares,
+      ownerEmail: m.ownerEmail,
+      ownerName,
+      myRole: mine && mine.role,
+    };
   }
 
   // ---- People: those you've invited, and who can see what ----
   const contacts = data.contacts || [];
   // Everyone you've invited, plus anyone something of yours is already shared
   // with (so nobody with access is hidden from this list).
+  // Once someone has signed up (and something is shared between you), they
+  // show under the name they gave; until then, under the name you gave.
+  const accounts = metaRef.current.accounts || {};
   const knownPeople = (() => {
-    const list = contacts.map((c) => ({ email: c.email, name: c.name || nameFromEmail(c.email), saved: true }));
+    const person = (email, given, saved) => {
+      const own = accounts[email];
+      const name = own || given || nameFromEmail(email);
+      return { email, name, given, joined: email in accounts, saved, payName: own ? own.split(/\s+/)[0] : name };
+    };
+    const list = contacts.map((c) => person(c.email, c.name, true));
     const seen = new Set(list.map((x) => x.email));
     Object.values(metaRef.current.items).forEach((m) => {
       if (m.ownerId !== user.id) return;
       m.shares.forEach((sh) => {
         if (seen.has(sh.email)) return;
         seen.add(sh.email);
-        list.push({ email: sh.email, name: nameFromEmail(sh.email), saved: false });
+        list.push(person(sh.email, null, false));
       });
     });
     return list;
   })();
-  const personName = (email) => (knownPeople.find((x) => x.email === email) || { name: nameFromEmail(email) }).name;
+  // The name someone's payments go under: the first name they signed up with
+  // (the same one their own app uses), else the name you gave them.
+  const personName = (email) => (knownPeople.find((x) => x.email === email) || { payName: nameFromEmail(email) }).payName;
+  // Who did something, by name: yourself, the people you know, then their email.
+  const whoName = (email) =>
+    !email
+      ? "Someone"
+      : email === myEmail
+      ? "You"
+      : (knownPeople.find((x) => x.email === email) || {}).name || accounts[email] || email;
   const ownedSharedWith = (email) =>
     Object.entries(metaRef.current.items)
       .filter(([, m]) => m.ownerId === user.id && m.shares.some((sh) => sh.email === email))
@@ -4271,17 +4297,41 @@ function Ledger({ user, onAccountDeleted }) {
 
         {view === "account" && (
           <>
-            <section className="ox-card ox-hero ox-rise" style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 8 }}>
-              <span className="ox-avatar" style={{ width: 52, height: 52, fontSize: 18, cursor: "default" }} aria-hidden="true">
-                {initials}
-              </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p className="ox-card-title" style={{ fontSize: 17 }}>{fullName || myName}</p>
-                <p className="ox-card-sub" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{myEmail}</p>
-              </div>
-              <button className="fl-btn small secondary" onClick={() => supabase.auth.signOut()}>
-                <LogOut size={16} /> Sign out
-              </button>
+            <section className="ox-card ox-hero ox-rise" style={{ marginBottom: 8 }}>
+              {editingName === "profile" ? (
+                <YourNameForm
+                  current={fullName}
+                  onDone={(saved) => {
+                    setEditingName(false);
+                    if (saved) showToast("Name saved");
+                  }}
+                />
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                  <span className="ox-avatar" style={{ width: 52, height: 52, fontSize: 18, cursor: "default" }} aria-hidden="true">
+                    {initials}
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p className="ox-card-title" style={{ fontSize: 17 }}>{fullName || "No name yet"}</p>
+                    <p className="ox-card-sub" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {myEmail}
+                    </p>
+                  </div>
+                  <button className="fl-icon-btn" onClick={() => setEditingName("profile")} aria-label="Change your name">
+                    <Pencil size={16} />
+                  </button>
+                </div>
+              )}
+              {editingName !== "profile" && (
+                <div className="fl-form-actions" style={{ marginTop: 16 }}>
+                  <button className="fl-btn secondary" onClick={() => setEditingName("profile")}>
+                    <Pencil size={16} /> {fullName ? "Change name" : "Add your name"}
+                  </button>
+                  <button className="fl-btn secondary" onClick={() => supabase.auth.signOut()}>
+                    <LogOut size={16} /> Sign out
+                  </button>
+                </div>
+              )}
             </section>
 
             <p className="fl-section-title">Password</p>
@@ -4342,15 +4392,15 @@ function Ledger({ user, onAccountDeleted }) {
                 <Info size={18} />
                 <span>
                   Add your name so payments you record show under it.{" "}
-                  <button className="fl-link" onClick={() => setEditingName(true)}>
+                  <button className="fl-link" onClick={() => setEditingName("people")}>
                     Add your name
                   </button>
                 </span>
               </div>
             )}
             <div className="ox-list">
-              <div className="ox-row ox-person" style={editingName ? { display: "block" } : undefined}>
-                {editingName ? (
+              <div className="ox-row ox-person" style={editingName === "people" ? { display: "block" } : undefined}>
+                {editingName === "people" ? (
                   <YourNameForm
                     current={fullName}
                     onDone={(saved) => {
@@ -4369,7 +4419,7 @@ function Ledger({ user, onAccountDeleted }) {
                       </span>
                       <span className="ox-row-sub">{myEmail}</span>
                     </span>
-                    <button className="fl-icon-btn" onClick={() => setEditingName(true)} aria-label="Change your name">
+                    <button className="fl-icon-btn" onClick={() => setEditingName("people")} aria-label="Change your name">
                       <Pencil size={16} />
                     </button>
                   </>
@@ -4386,6 +4436,7 @@ function Ledger({ user, onAccountDeleted }) {
                       <span className="ox-row-name">{person.name}</span>
                       <span className="ox-row-sub">
                         {person.email} · {n ? `${n} shared` : "nothing shared yet"}
+                        {n ? (person.joined ? " · joined" : " · not joined yet") : ""}
                       </span>
                     </span>
                     <button
@@ -4424,11 +4475,12 @@ function Ledger({ user, onAccountDeleted }) {
                   myEmail,
                   names: Object.fromEntries([...data.lenders, ...(data.incomes || [])].map((x) => [x.id, x.name])),
                   currencyOf: itemCurrency,
+                  nameOf: whoName,
                 });
                 return (
                   <div className="fl-activity-row" key={h.id}>
                     <span>
-                      <strong>{d.who}</strong> {d.text}
+                      <strong>{d.who === "You" || d.who === "Someone" ? d.who : whoName(d.who)}</strong> {d.text}
                     </span>
                     <span className="fl-card-sub">{d.when}</span>
                   </div>

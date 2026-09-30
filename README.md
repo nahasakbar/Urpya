@@ -130,7 +130,8 @@ For when people outside the family start using it:
 
 1. **Update the database.** Run the whole of `supabase/accounts-setup.sql`
    again (SQL Editor → New query → paste → Run). It's safe to run again; this
-   adds "Delete my account" and currencies for shared items.
+   adds "Delete my account", currencies for shared items and people's own
+   names. Run it again whenever this file changes.
 2. **Protect your Gmail.** While codes are sent from your Gmail, strangers
    could make it send lots of emails. In Supabase, open **Authentication →
    Rate Limits** and set the limit for sending emails to about 20 an hour.
