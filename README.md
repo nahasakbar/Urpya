@@ -9,8 +9,10 @@ database.
 ## How it works
 
 - **Vercel** hosts the app (the website everyone opens).
-- **Supabase** stores the data and handles sign-in. Everyone signs in with a
-  6-digit code sent to their email — no passwords.
+- **Supabase** stores the data and handles sign-in: email and password, or
+  Google. A new account confirms its email with a 6-digit code, and a
+  forgotten password is reset with one (codes rather than links, so it works
+  the same in a browser, a Home Screen icon or a future app).
 - Each debt, income source and monthly entry is saved separately, with a
   version number, so two people editing at once never silently overwrite
   each other. Every change is recorded in a history (who, what, when), every
@@ -73,6 +75,47 @@ Supabase also caps how many sign-in emails go out per hour (you can raise
 it under **Authentication → Rate Limits**). If none arrive at all, recheck the
 SMTP settings from step 2; the Gmail account's inbox may also have a
 warning from Google.
+
+## Sign-in setup
+
+1. **Email templates** (Supabase → Authentication → Emails). Each needs the
+   code, `{{ .Token }}`, rather than a link:
+   - **Confirm sign up** (new accounts). Subject `Confirm your Ledger
+     account`; body:
+     ```html
+     <h2>Confirm your Ledger account</h2>
+     <p>Enter this code in the app to confirm your email:</p>
+     <p style="font-size:28px;font-weight:bold;letter-spacing:4px">{{ .Token }}</p>
+     <p>It expires in an hour. If you didn't sign up, you can ignore this email.</p>
+     ```
+   - **Reset password**. Subject `Reset your Ledger password`; body:
+     ```html
+     <h2>Reset your Ledger password</h2>
+     <p>Enter this code in the app, then choose a new password:</p>
+     <p style="font-size:28px;font-weight:bold;letter-spacing:4px">{{ .Token }}</p>
+     <p>It expires in an hour. If you didn't ask for it, you can ignore this email.</p>
+     ```
+   Accounts made before passwords existed sign in the first time with
+   **Forgot password?**, which sets their password.
+2. **Keep "Confirm email" on** (Authentication → Sign In / Providers →
+   Email). Sharing is by email address, so an address must be proven before
+   it can see what's shared with it.
+3. **Google (optional).** The button appears by itself once Google is
+   switched on in Supabase:
+   - In [Google Cloud Console](https://console.cloud.google.com), create a
+     project, then **APIs & Services → OAuth consent screen**: External, app
+     name `Ledger`, your email as support and developer contact; publish it
+     ("In production").
+   - **Credentials → Create credentials → OAuth client ID → Web
+     application.** Under **Authorized redirect URIs** add
+     `https://<your-project>.supabase.co/auth/v1/callback` (Supabase shows
+     this exact address on its Google page). Create, then copy the **Client
+     ID** and **Client secret**.
+   - In Supabase → **Authentication → Sign In / Providers → Google**: switch
+     it on, paste the Client ID and secret, save.
+   - In Supabase → **Authentication → URL Configuration**: set **Site URL**
+     to the app's address (e.g. `https://yourapp.vercel.app`) and add the same
+     address under **Redirect URLs**.
 
 ## Opening it to everyone
 

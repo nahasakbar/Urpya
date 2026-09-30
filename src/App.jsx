@@ -20,8 +20,10 @@ import {
   RotateCcw,
   Mail,
   Shield,
+  Eye,
+  EyeOff,
 } from "lucide-react";
-import { supabase } from "./supabaseClient.js";
+import { supabase, getRememberMe, setRememberMe, loadAuthSettings } from "./supabaseClient.js";
 import * as store from "./store.js";
 import { buildCalendar } from "./calendar.js";
 import { describeChange } from "./activity.js";
@@ -1358,8 +1360,10 @@ function PrivacyNote() {
     <div className="fl-prose">
       <p className="fl-panel-title fl-serif">What Ledger keeps</p>
       <p>
-        Your email address, so you can sign in, and what you type in: debts, payments, income, your budget and the
-        names you add. Nothing else — no contacts, no location and no bank connection.
+        Your name and email address; your password, stored scrambled so nobody can read it (not even the person
+        who runs Ledger); and what you type in: debts, payments, income, your budget and the names you add. If you
+        sign in with Google, Ledger gets only your name and email address from Google. Nothing else — no contacts,
+        no location and no bank connection.
       </p>
       <p className="fl-panel-title fl-serif">Who can see it</p>
       <p>
@@ -1367,7 +1371,8 @@ function PrivacyNote() {
         monthly entries and its history. Signed-out visitors see nothing.
       </p>
       <p>
-        Everything is stored with Supabase, a database hosting company, and sign-in codes are sent through Gmail. The
+        Everything is stored with Supabase, a database hosting company, and emails with codes (to confirm your email
+        or reset your password) are sent through Gmail. The
         person who runs Ledger can reach the database, as with any website, but doesn’t look at or share what’s in
         it. There are no ads, and nothing is sold or used to track you.
         {TURNSTILE_SITE_KEY && " The sign-in page uses Cloudflare Turnstile to check you’re a person, not a bot."}
@@ -1384,7 +1389,7 @@ function PrivacyNote() {
         anything important with your lender.
       </p>
       <p className="fl-panel-title fl-serif">Questions</p>
-      <p>Reply to any sign-in email from Ledger.</p>
+      <p>Reply to any email from Ledger.</p>
     </div>
   );
 }
@@ -1501,59 +1506,328 @@ function useTurnstile(siteKey) {
   return { enabled: !!siteKey, boxRef, token, failed, reset };
 }
 
-// Sign in with a 6-digit code sent by email — no password, and it works inside
-// the Home Screen app (a sign-in link would open Safari instead).
-function SignIn({ notice }) {
+// Google's "G", for the Continue with Google button.
+function GoogleLogo() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+      <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z" />
+      <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
+      <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z" />
+      <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z" />
+    </svg>
+  );
+}
+
+const MIN_PASSWORD = 8;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// A password box with a show/hide eye.
+function PasswordField({ label, value, onChange, onEnter, autoComplete }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="fl-field">
+      <label>{label}</label>
+      <div className="fl-password">
+        <input
+          type={show ? "text" : "password"}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && onEnter && onEnter()}
+          autoComplete={autoComplete}
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+        />
+        <button
+          type="button"
+          className="fl-password-eye"
+          onClick={() => setShow(!show)}
+          aria-label={show ? "Hide password" : "Show password"}
+        >
+          {show ? <Eye size={18} /> : <EyeOff size={18} />}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Plain terms, shown from the sign-up screen.
+function TermsNote() {
+  return (
+    <div className="fl-prose">
+      <p className="fl-panel-title fl-serif">Using Ledger</p>
+      <p>
+        Ledger is a free tool to help you keep track of your debts and income and plan how to pay them off. You’re
+        welcome to use it for yourself and to share items with the people you manage them with.
+      </p>
+      <p className="fl-panel-title fl-serif">Not financial advice</p>
+      <p>
+        Balances, plans and dates are calculations from what you enter. They can’t know everything about your
+        situation, so check anything important with your lender before acting on it.
+      </p>
+      <p className="fl-panel-title fl-serif">Your part</p>
+      <p>
+        You’re responsible for what you enter and who you share it with. Keep your password to yourself, and don’t
+        use Ledger for anything unlawful or to store other people’s details without their agreement. Accounts that
+        are misused may be removed.
+      </p>
+      <p className="fl-panel-title fl-serif">No guarantees</p>
+      <p>
+        Ledger is provided as it is. It’s looked after carefully, but it may sometimes be unavailable or have
+        mistakes, so keep your own copy (Account → Download a backup). You can delete your account at any time.
+      </p>
+      <p className="fl-panel-title fl-serif">Changes</p>
+      <p>These terms may be updated; the app always shows the latest. Questions: reply to any email from Ledger.</p>
+    </div>
+  );
+}
+
+// Signing in and creating an account: email + password, or Google once it's
+// switched on in Supabase. A new account confirms its email with a 6-digit
+// code, and a forgotten password is reset with one — codes rather than links,
+// so it works the same in a browser, on a Home Screen icon or in a future app.
+// `onHold(true)` keeps this screen up while a password reset finishes, since
+// the reset code signs you in before the new password is saved.
+function SignIn({ notice, onHold }) {
+  const [stage, setStage] = useState("signin"); // signin | signup | confirm | forgot | reset
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
-  const [stage, setStage] = useState("email");
+  const [agree, setAgree] = useState(false);
+  const [remember, setRemember] = useState(getRememberMe);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [showPrivacy, setShowPrivacy] = useState(false);
+  const [info, setInfo] = useState("");
+  const [resetVerified, setResetVerified] = useState(false);
+  const [sheet, setSheet] = useState(null);
+  const [googleOn, setGoogleOn] = useState(false);
   const bot = useTurnstile(TURNSTILE_SITE_KEY);
-  const waitingForBot = bot.enabled && !bot.token;
+  const waitingForBot = bot.enabled && !bot.token && !bot.failed;
+  const cleanEmail = email.trim().toLowerCase();
 
-  async function sendCode() {
-    const addr = email.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return setError("Enter your email address.");
-    // If the check couldn't run, ask anyway: Supabase decides whether a
-    // request without a pass is allowed.
-    if (waitingForBot && !bot.failed) return setError("One moment — just checking you’re a person, not a bot.");
-    setBusy(true);
-    setError("");
-    const options = { shouldCreateUser: true };
-    if (bot.token) options.captchaToken = bot.token;
-    const { error: err } = await supabase.auth.signInWithOtp({ email: addr, options });
-    if (bot.enabled) bot.reset();
-    setBusy(false);
-    if (err) {
-      console.error("send code failed", err);
-      const msg = err.message || "";
-      setError(
-        /captcha/i.test(msg)
-          ? "The robot check didn’t go through — reload the page and try again."
-          : /rate|seconds|many/i.test(msg)
-          ? "Too many codes asked for just now — wait a minute and try again."
-          : "Couldn’t send the code — check the email and your connection."
-      );
-      return;
+  useEffect(() => {
+    loadAuthSettings().then((s) => setGoogleOn(!!(s && s.external && s.external.google)));
+    // Back from Google with an error (e.g. sign-in cancelled).
+    const params = new URLSearchParams(window.location.hash.slice(1) + "&" + window.location.search.slice(1));
+    const why = params.get("error_description");
+    if (why) {
+      setError("Google sign-in didn’t finish: " + why.replace(/\+/g, " "));
+      window.history.replaceState(null, "", window.location.pathname);
     }
-    setEmail(addr);
-    setStage("code");
+  }, []);
+
+  function go(next) {
+    setStage(next);
+    setError("");
+    setInfo("");
+    setCode("");
   }
 
-  async function verify() {
+  // Requests that need a robot-check pass. Each pass works only once, so the
+  // check is reset after every request. If the check couldn't run, it asks
+  // anyway and Supabase's setting decides.
+  async function withBot(run) {
+    if (waitingForBot) {
+      setError("One moment — just checking you’re a person, not a bot.");
+      return null;
+    }
+    setBusy(true);
+    setError("");
+    setInfo("");
+    try {
+      return await run(bot.token || undefined);
+    } catch (e) {
+      return { error: e };
+    } finally {
+      if (bot.enabled) bot.reset();
+      setBusy(false);
+    }
+  }
+
+  function explain(err, fallback) {
+    const msg = (err && err.message) || "";
+    if (/captcha/i.test(msg)) return "The robot check didn’t go through — reload the page and try again.";
+    if (/rate limit|seconds|too many/i.test(msg)) return "Too many tries just now — wait a minute and try again.";
+    return fallback;
+  }
+
+  const ALREADY =
+    "There’s already an account with this email. Sign in instead — or tap “Forgot password?” if you haven’t set a password yet.";
+
+  async function signIn() {
+    if (!EMAIL_RE.test(cleanEmail)) return setError("Enter your email address.");
+    if (!password) return setError("Enter your password.");
+    setRememberMe(remember);
+    const res = await withBot((captchaToken) =>
+      supabase.auth.signInWithPassword({ email: cleanEmail, password, options: { captchaToken } })
+    );
+    if (!res || !res.error) return;
+    console.error("sign in failed", res.error);
+    const msg = res.error.message || "";
+    if (/not confirmed/i.test(msg)) {
+      go("confirm");
+      setInfo("Your email isn’t confirmed yet. Tap “Send a new code”, then enter it here.");
+      return;
+    }
+    setError(
+      /invalid login/i.test(msg)
+        ? "Wrong email or password. Used to sign in with a code? Tap “Forgot password?” to set a password."
+        : explain(res.error, "Couldn’t sign in — check your connection and try again.")
+    );
+  }
+
+  async function signUp() {
+    if (!name.trim()) return setError("Enter your name.");
+    if (!EMAIL_RE.test(cleanEmail)) return setError("Enter your email address.");
+    if (password.length < MIN_PASSWORD) return setError(`Choose a password of at least ${MIN_PASSWORD} characters.`);
+    if (!agree) return setError("Please agree to the Terms and Privacy Policy first.");
+    setRememberMe(remember);
+    const res = await withBot((captchaToken) =>
+      supabase.auth.signUp({
+        email: cleanEmail,
+        password,
+        options: { data: { full_name: name.trim() }, captchaToken },
+      })
+    );
+    if (!res) return;
+    if (res.error) {
+      console.error("sign up failed", res.error);
+      return setError(
+        /registered|exists/i.test(res.error.message || "")
+          ? ALREADY
+          : explain(res.error, "Couldn’t create your account — check your connection and try again.")
+      );
+    }
+    // Supabase answers an email that already has an account with an empty
+    // user rather than an error, and sends nothing.
+    const u = res.data && res.data.user;
+    if (u && Array.isArray(u.identities) && u.identities.length === 0) return setError(ALREADY);
+    if (res.data && res.data.session) return; // no confirmation needed: signed in already
+    go("confirm");
+  }
+
+  async function confirmEmail() {
     const token = code.replace(/\D/g, "");
     if (token.length < 6) return setError("Enter the code from the email.");
     setBusy(true);
     setError("");
-    const { error: err } = await supabase.auth.verifyOtp({ email, token, type: "email" });
+    const { error: err } = await supabase.auth.verifyOtp({ email: cleanEmail, token, type: "email" });
     setBusy(false);
     if (err) {
-      console.error("verify failed", err);
+      console.error("confirm failed", err);
       setError("That code didn’t work — check it, or send a new one.");
     }
+    // Otherwise the account is confirmed and signed in, and the app opens.
   }
+
+  async function resendConfirmation() {
+    const res = await withBot((captchaToken) =>
+      supabase.auth.resend({ type: "signup", email: cleanEmail, options: { captchaToken } })
+    );
+    if (!res) return;
+    if (res.error) {
+      console.error("resend failed", res.error);
+      return setError(explain(res.error, "Couldn’t send a new code — try again."));
+    }
+    setInfo(`A new code is on its way to ${cleanEmail}.`);
+  }
+
+  async function sendResetCode() {
+    if (!EMAIL_RE.test(cleanEmail)) return setError("Enter your email address.");
+    const res = await withBot((captchaToken) => supabase.auth.resetPasswordForEmail(cleanEmail, { captchaToken }));
+    if (!res) return;
+    if (res.error) {
+      console.error("reset code failed", res.error);
+      return setError(explain(res.error, "Couldn’t send the code — check the email and your connection."));
+    }
+    if (stage !== "reset") {
+      go("reset");
+      setPassword("");
+      setResetVerified(false);
+    } else {
+      setInfo(`A new code is on its way to ${cleanEmail}.`);
+    }
+  }
+
+  async function saveNewPassword() {
+    const token = code.replace(/\D/g, "");
+    if (!resetVerified && token.length < 6) return setError("Enter the code from the email.");
+    if (password.length < MIN_PASSWORD) return setError(`Choose a password of at least ${MIN_PASSWORD} characters.`);
+    setBusy(true);
+    setError("");
+    setRememberMe(remember);
+    onHold(true);
+    if (!resetVerified) {
+      const v = await supabase.auth.verifyOtp({ email: cleanEmail, token, type: "recovery" });
+      if (v.error) {
+        console.error("reset code didn’t work", v.error);
+        onHold(false);
+        setBusy(false);
+        return setError("That code didn’t work — check it, or send a new one.");
+      }
+      setResetVerified(true);
+    }
+    const u = await supabase.auth.updateUser({ password });
+    setBusy(false);
+    if (u.error && !/different from the old/i.test(u.error.message || "")) {
+      console.error("new password not saved", u.error);
+      return setError("Couldn’t save the new password — try again, or tap “Skip” and change it later in Account.");
+    }
+    onHold(false); // saved (or it was already this password): open the app
+  }
+
+  async function continueWithGoogle() {
+    setRememberMe(remember);
+    setBusy(true);
+    setError("");
+    const { error: err } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin },
+    });
+    if (err) {
+      console.error("google failed", err);
+      setBusy(false);
+      setError("Couldn’t open Google sign-in — try again.");
+    }
+  }
+
+  const needsBot = stage === "signin" || stage === "signup" || stage === "forgot";
+  const mainBlocked = busy || (needsBot && waitingForBot);
+  const screens = {
+    signin: {
+      title: "Welcome back",
+      sub: "Sign in with your email and password to see your ledger.",
+      action: "Sign in",
+      run: signIn,
+    },
+    signup: {
+      title: "Create your account",
+      sub: "Give your name, email and a password to get started.",
+      action: "Sign up",
+      run: signUp,
+    },
+    confirm: {
+      title: "Confirm your email",
+      sub: `Enter the 6-digit code we sent to ${cleanEmail}. It can take a minute — check spam too.`,
+      action: "Confirm",
+      run: confirmEmail,
+    },
+    forgot: {
+      title: "Forgot your password?",
+      sub: "Enter your email and we’ll send you a code to set a new one.",
+      action: "Send code",
+      run: sendResetCode,
+    },
+    reset: {
+      title: "Set a new password",
+      sub: `If there’s an account for ${cleanEmail}, we’ve sent it a 6-digit code. Enter it and choose a new password.`,
+      action: "Save new password",
+      run: saveNewPassword,
+    },
+  };
+  const screen = screens[stage];
+  const onEnter = () => !mainBlocked && screen.run();
 
   return (
     <div className="fl-shell">
@@ -1565,82 +1839,172 @@ function SignIn({ notice }) {
           <div className="fl-rivet"></div>
         </div>
         <div className="fl-z1">
-          <h1 className="fl-title fl-serif">Ledger</h1>
-          <p className="fl-subtitle">Your debts and income, shared only with who you choose</p>
+          {stage === "signin" ? (
+            <>
+              <h1 className="fl-title fl-serif">Ledger</h1>
+              <p className="fl-subtitle">Your debts and income, shared only with who you choose</p>
+            </>
+          ) : (
+            <>
+              <button className="fl-back-row" onClick={() => go("signin")} disabled={busy}>
+                <ChevronLeft size={16} /> Sign in
+              </button>
+              <h1 className="fl-title fl-serif">Ledger</h1>
+            </>
+          )}
         </div>
       </div>
+
       <div className="fl-content">
         {notice && (
           <div className="fl-panel" style={{ marginTop: 8 }}>
             <p className="fl-card-sub">{notice}</p>
           </div>
         )}
-        <div className="fl-panel" style={{ marginTop: 8 }}>
-          {stage === "email" ? (
+        <div className="fl-auth">
+          <h2 className="fl-auth-title fl-serif">{screen.title}</h2>
+          <p className="fl-auth-sub">{screen.sub}</p>
+
+          {(stage === "signin" || stage === "signup") && googleOn && (
             <>
-              <p className="fl-panel-title fl-serif">Sign in</p>
-              <div className="fl-field">
-                <label>Your email</label>
-                <input
-                  type="email"
-                  inputMode="email"
-                  autoComplete="email"
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && sendCode()}
-                  placeholder="name@example.com"
-                />
-              </div>
-              <p className="fl-card-sub" style={{ marginBottom: 12 }}>
-                We’ll email you a code to sign in. No password needed. New here? The same code creates your account.
-              </p>
-              <div className="fl-form-actions">
-                <button className="fl-btn" onClick={sendCode} disabled={busy || (waitingForBot && !bot.failed)}>
-                  {busy ? "Sending…" : waitingForBot && !bot.failed ? "One moment…" : "Email me a code"}
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <p className="fl-panel-title fl-serif">Enter your code</p>
-              <p className="fl-card-sub" style={{ marginBottom: 10 }}>
-                We sent a code to {email}. It can take a minute — check spam too.
-              </p>
-              <div className="fl-field">
-                <label>Code</label>
-                <input
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && verify()}
-                  placeholder="123456"
-                  className="fl-code-input"
-                />
-              </div>
-              <div className="fl-form-actions">
-                <button
-                  className="fl-btn secondary"
-                  onClick={() => {
-                    setStage("email");
-                    setCode("");
-                    setError("");
-                  }}
-                  disabled={busy}
-                >
-                  Different email
-                </button>
-                <button className="fl-btn" onClick={verify} disabled={busy}>
-                  {busy ? "Checking…" : "Sign in"}
-                </button>
-              </div>
-              <button className="fl-link" style={{ marginTop: 12 }} onClick={sendCode} disabled={busy || (waitingForBot && !bot.failed)}>
-                Send a new code
+              <button className="fl-social-btn" onClick={continueWithGoogle} disabled={busy}>
+                <GoogleLogo /> Continue with Google
               </button>
+              <p className="fl-auth-fine">
+                Continuing with Google means you agree to the{" "}
+                <button className="fl-link" onClick={() => setSheet("terms")}>
+                  Terms
+                </button>{" "}
+                and{" "}
+                <button className="fl-link" onClick={() => setSheet("privacy")}>
+                  Privacy Policy
+                </button>
+                .
+              </p>
+              <div className="fl-auth-or">or</div>
             </>
           )}
+
+          {stage === "signup" && (
+            <div className="fl-field">
+              <label>Full name</label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && onEnter()}
+                autoComplete="name"
+                placeholder="e.g. Fathima Rahman"
+              />
+            </div>
+          )}
+
+          {(stage === "signin" || stage === "signup" || stage === "forgot") && (
+            <div className="fl-field">
+              <label>Email address</label>
+              <input
+                type="email"
+                inputMode="email"
+                autoComplete={stage === "signup" ? "email" : "username"}
+                autoCapitalize="none"
+                autoCorrect="off"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && onEnter()}
+                placeholder="name@example.com"
+              />
+            </div>
+          )}
+
+          {(stage === "signin" || stage === "signup") && (
+            <PasswordField
+              label="Password"
+              value={password}
+              onChange={setPassword}
+              onEnter={onEnter}
+              autoComplete={stage === "signin" ? "current-password" : "new-password"}
+            />
+          )}
+
+          {(stage === "confirm" || (stage === "reset" && !resetVerified)) && (
+            <div className="fl-field">
+              <label>Code from the email</label>
+              <input
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && onEnter()}
+                placeholder="123456"
+                className="fl-code-input"
+              />
+            </div>
+          )}
+
+          {stage === "reset" && (
+            <PasswordField
+              label={`New password (at least ${MIN_PASSWORD} characters)`}
+              value={password}
+              onChange={setPassword}
+              onEnter={onEnter}
+              autoComplete="new-password"
+            />
+          )}
+
+          {stage === "signin" && (
+            <div className="fl-auth-row">
+              <span className="fl-auth-check">
+                <Switch on={remember} onChange={setRemember} label="Remember me" />
+                Remember me
+              </span>
+              <button className="fl-link" onClick={() => go("forgot")}>
+                Forgot password?
+              </button>
+            </div>
+          )}
+
+          {stage === "signup" && (
+            <div className="fl-auth-row">
+              <span className="fl-auth-check">
+                <Switch on={agree} onChange={setAgree} label="I agree to the Terms and Privacy Policy" />
+                <span>
+                  I agree to the{" "}
+                  <button className="fl-link" onClick={() => setSheet("terms")}>
+                    Terms
+                  </button>{" "}
+                  &amp;{" "}
+                  <button className="fl-link" onClick={() => setSheet("privacy")}>
+                    Privacy Policy
+                  </button>
+                </span>
+              </span>
+            </div>
+          )}
+
+          <button className="fl-btn fl-auth-main" onClick={screen.run} disabled={mainBlocked}>
+            {busy ? "One moment…" : needsBot && waitingForBot ? "One moment…" : screen.action}
+          </button>
+
+          {(stage === "confirm" || (stage === "reset" && !resetVerified)) && (
+            <p className="fl-auth-switch">
+              No code?{" "}
+              <button
+                className="fl-link"
+                onClick={stage === "confirm" ? resendConfirmation : sendResetCode}
+                disabled={busy || waitingForBot}
+              >
+                Send a new code
+              </button>
+            </p>
+          )}
+          {stage === "reset" && resetVerified && (
+            <p className="fl-auth-switch">
+              <button className="fl-link" onClick={() => onHold(false)}>
+                Skip — I’ll change it later in Account
+              </button>
+            </p>
+          )}
+
+          {info && <p className="fl-card-sub" style={{ marginTop: 12, textAlign: "center" }}>{info}</p>}
           {error && (
             <p className="fl-overdue" style={{ marginTop: 12 }}>
               <AlertCircle size={12} /> {error}
@@ -1648,22 +2012,84 @@ function SignIn({ notice }) {
           )}
           {bot.enabled && <div className="fl-turnstile" ref={bot.boxRef} />}
           {bot.failed && (
-            <p className="fl-card-sub" style={{ marginTop: 10 }}>
+            <p className="fl-card-sub" style={{ marginTop: 10, textAlign: "center" }}>
               The robot check couldn’t run here (error {bot.failed}).
             </p>
           )}
+
+          {stage === "signin" && (
+            <p className="fl-auth-switch">
+              Don’t have an account?{" "}
+              <button className="fl-link" onClick={() => go("signup")}>
+                Sign up
+              </button>
+            </p>
+          )}
+          {stage === "signup" && (
+            <p className="fl-auth-switch">
+              Already have an account?{" "}
+              <button className="fl-link" onClick={() => go("signin")}>
+                Sign in
+              </button>
+            </p>
+          )}
+          <p className="fl-signin-links">
+            <button className="fl-link" onClick={() => setSheet("privacy")}>
+              Privacy
+            </button>{" "}
+            ·{" "}
+            <button className="fl-link" onClick={() => setSheet("terms")}>
+              Terms
+            </button>
+          </p>
         </div>
-        <p className="fl-signin-links">
-          <button className="fl-link" onClick={() => setShowPrivacy(true)}>
-            Privacy — what’s kept and who can see it
-          </button>
-        </p>
       </div>
-      {showPrivacy && (
-        <Sheet title="Privacy" onClose={() => setShowPrivacy(false)}>
-          <PrivacyNote />
+      {sheet && (
+        <Sheet title={sheet === "terms" ? "Terms" : "Privacy"} onClose={() => setSheet(null)}>
+          {sheet === "terms" ? <TermsNote /> : <PrivacyNote />}
         </Sheet>
       )}
+    </div>
+  );
+}
+
+// Change (or, after Google sign-in, add) a password while signed in.
+function ChangePasswordPanel() {
+  const [pw, setPw] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  async function save() {
+    if (pw.length < MIN_PASSWORD) return setMsg(`Choose a password of at least ${MIN_PASSWORD} characters.`);
+    setBusy(true);
+    setMsg("");
+    const { error } = await supabase.auth.updateUser({ password: pw });
+    setBusy(false);
+    if (error) {
+      console.error("change password failed", error);
+      const m = error.message || "";
+      setMsg(
+        /different from the old/i.test(m)
+          ? "That’s already your password."
+          : /reauth|recent/i.test(m)
+          ? "For safety, sign out and use “Forgot password?” to change it."
+          : "Couldn’t change it — try again."
+      );
+      return;
+    }
+    setPw("");
+    setMsg("Password changed.");
+  }
+  return (
+    <div className="fl-panel">
+      <PasswordField label="New password" value={pw} onChange={setPw} onEnter={save} autoComplete="new-password" />
+      <div className="fl-form-actions">
+        <button className="fl-btn" onClick={save} disabled={busy}>
+          {busy ? "Saving…" : "Change password"}
+        </button>
+      </div>
+      <p className="fl-card-sub" style={{ marginTop: 10 }}>
+        {msg || "Signed in with Google? Add a password here to be able to sign in with your email too."}
+      </p>
     </div>
   );
 }
@@ -1672,6 +2098,7 @@ function SignIn({ notice }) {
 export default function App() {
   const [session, setSession] = useState(undefined);
   const [notice, setNotice] = useState("");
+  const [hold, setHold] = useState(false);
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
@@ -1685,7 +2112,7 @@ export default function App() {
       </div>
     );
   }
-  if (!session) return <SignIn notice={notice} />;
+  if (!session || hold) return <SignIn notice={notice} onHold={setHold} />;
   return (
     <Ledger
       key={session.user.id}
@@ -1697,8 +2124,11 @@ export default function App() {
 
 function Ledger({ user, onAccountDeleted }) {
   const myEmail = (user.email || "").toLowerCase();
-  // A starting name for recording payments: the first part of the email.
+  // A starting name for recording payments: the first name given at sign-up
+  // (or by Google), else the first part of the email.
+  const fullName = ((user.user_metadata && (user.user_metadata.full_name || user.user_metadata.name)) || "").trim();
   const myName = (() => {
+    if (fullName) return fullName.split(/\s+/)[0];
     const local = myEmail.split("@")[0].replace(/[._-]+/g, " ").trim() || "Me";
     return local.charAt(0).toUpperCase() + local.slice(1);
   })();
@@ -3192,13 +3622,19 @@ function Ledger({ user, onAccountDeleted }) {
           <>
             <div className="fl-summary">
               <p className="fl-summary-label">Signed in as</p>
-              <p className="fl-list-row-name" style={{ margin: "2px 0 10px" }}>{myEmail}</p>
+              <p className="fl-list-row-name" style={{ margin: "2px 0 10px" }}>
+                {fullName ? `${fullName} · ` : ""}
+                {myEmail}
+              </p>
               <div className="fl-form-actions">
                 <button className="fl-btn secondary" onClick={() => supabase.auth.signOut()}>
                   <LogOut size={14} /> Sign out
                 </button>
               </div>
             </div>
+
+            <p className="fl-section-title">Password</p>
+            <ChangePasswordPanel />
 
             <p className="fl-section-title">Currency</p>
             <div className="fl-panel">

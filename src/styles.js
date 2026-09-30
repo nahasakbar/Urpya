@@ -735,6 +735,73 @@ export const styles = `
   .fl-prose .fl-panel-title:first-child { margin-top: 0; }
   .fl-signin-links { text-align: center; font-size: 12px; color: var(--muted); margin: 2px 0 16px; }
 
+  /* Sign in / create account */
+  .fl-auth { max-width: 420px; margin: 0 auto; padding-top: 6px; }
+  .fl-auth-title { text-align: center; font-size: 26px; font-weight: 700; color: var(--ink); margin: 8px 0 6px; }
+  .fl-auth-sub { text-align: center; font-size: 13px; line-height: 1.45; color: var(--muted); margin: 0 8px 20px; }
+  .fl-auth .fl-field input {
+    font-size: 16px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: var(--paper-card);
+  }
+  .fl-auth .fl-code-input { font-size: 22px !important; }
+  .fl-social-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 12px;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: var(--paper-card);
+    box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 2px 6px rgba(74,44,29,0.10);
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .fl-social-btn:disabled { opacity: 0.5; cursor: default; }
+  .fl-auth-fine { text-align: center; font-size: 11px; color: var(--muted); margin: 8px 0 0; }
+  .fl-auth-or {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 16px 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .fl-auth-or::before, .fl-auth-or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .fl-password { position: relative; }
+  .fl-password input { padding-right: 46px !important; }
+  .fl-password-eye {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    padding: 10px;
+    border: none;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .fl-auth-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 0 0 16px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .fl-auth-check { display: flex; align-items: center; gap: 8px; }
+  .fl-auth-main { width: 100%; padding: 13px; font-size: 15px; border-radius: 12px; }
+  .fl-auth-switch { text-align: center; font-size: 13px; color: var(--muted); margin: 16px 0 6px; }
+  .fl-auth-switch .fl-link { font-weight: 700; }
+
   /* Cloudflare's robot check: invisible unless it needs a tap */
   .fl-turnstile { display: flex; justify-content: center; }
   .fl-turnstile iframe { margin-top: 12px; }
