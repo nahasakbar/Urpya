@@ -1385,6 +1385,23 @@ export const styles = `
   .ox-shake { animation: ox-shake 360ms var(--ease-out); }
   @keyframes ox-shake { 0%, 100% { transform: none; } 25% { transform: translateX(-5px); } 60% { transform: translateX(4px); } }
 
+  /* Face ID lock (iPhone app) */
+  .ox-lock {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s-4);
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    animation: ox-fade var(--dur) var(--ease-out) both;
+  }
+  .ox-lock-title { margin: 0; font-size: 17px; font-weight: 600; }
+
   /* ------------------------------------------------------ reduced motion */
   @media (prefers-reduced-motion: reduce) {
     .fl-shell *, .fl-shell *::before, .fl-shell *::after, .ox-layer *, .fl-toast {

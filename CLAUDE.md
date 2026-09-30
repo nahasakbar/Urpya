@@ -1,6 +1,6 @@
-# Ledger
+# Kaayi
 
-A React + Vite app for tracking debts and income, with a payoff Strategy. Since 2026-09-29 it's **user-based**: each person signs in (Supabase Auth; see "Sign-in" below), owns their own items, and can share any single debt or income source with other people by email, as "can edit" or "view only". It started as a shared family ledger in one JSON row, and that old `ledger` table is only read once to import, then locked with `supabase/lock-old-ledger.sql`.
+**Kaayi** (by **Paradox Dynamics**, the owner's UK company; renamed from "Ledger" on 2026-10-01) is a React + Vite app for tracking debts and income, with a payoff Strategy. It runs as a website (Vercel) and is being shipped as an iPhone app (Capacitor, see "The iPhone app" below), Android next. Since 2026-09-29 it's **user-based**: each person signs in (Supabase Auth; see "Sign-in" below), owns their own items, and can share any single debt or income source with other people by email, as "can edit" or "view only". It started as a shared family ledger in one JSON row, and that old `ledger` table is only read once to import, then locked with `supabase/lock-old-ledger.sql`.
 
 ## Files
 
@@ -10,6 +10,7 @@ A React + Vite app for tracking debts and income, with a payoff Strategy. Since 
 - `src/calendar.js` (.ics reminders) and `src/activity.js` (history rows → sentences), tested in `src/helpers.test.js`.
 - `src/styles.js`: all CSS (the Onyx design system, below); `src/motion.jsx` and `src/charts.jsx`: animated numbers and charts. `src/App.jsx`: the `App` root (session → `SignIn` or `Ledger`) and every screen. `persist(next)` in `Ledger` is the one way to save: it shows the change at once, queues `store.saveChanges`, and offers Undo. `dataRef` always holds the latest data, because an Undo tapped seconds later must diff against what's on screen now (a stale-closure bug here once made Undo change only the screen).
 - `supabase/accounts-setup.sql`: tables `items` (kind debt/income/expense, `data` jsonb, version, soft delete), `item_shares` (by lower-cased email, role editor/viewer), `entries` (one per item per month), `user_settings`, `history` (written only by triggers). It also sets row-level security via security-definer helpers (`can_see_item`, `can_edit_item`, `owns_item`) and triggers that stamp the owner, bump versions and forbid changing owners or non-owners deleting. Three functions callable only when signed in: `shared_item_currencies()` (the owner's currency for each item shared with you), `connected_names()` (the sign-up name of everyone you share with or who shares with you, and nobody else's, so names can't be looked up by typing emails), and `delete_my_account()` (see below). It's safe to re-run.
+- `src/native.js`: everything only the phone app does (haptics, share sheet, saving files, notifications, Face ID, app state). Each function does nothing, or falls back to the web way, in a browser. See "The iPhone app".
 - `npm run build` runs `vitest run` first, so failing tests block a Vercel deploy.
 
 ## Sign-in
@@ -96,6 +97,23 @@ The Strategy simulation follows the budget month by month. `budgetByMonth` evalu
 
 `computeSchedule` already adds the current month's interest to each balance, so `simulateStrategy` and `simulateStatusQuo` add no interest in their month 1 ("Pay this for <current month>"). Interest accrues from month 2. The app passes `currentInterest` (this month's interest) so a protected loan's month-1 floor still covers it. This was fixed on 2026-09-29, when the old code added a second month's interest. It was verified by showing that the new result from today's balance equals the old result from last month's balance, with the same payments and payoff months and interest lower by exactly one month. On the family's data this changed the plan from 3y8m to 3y7m and total interest by about ₹53k, and this month's payments didn't change.
 
+## The iPhone app (Capacitor)
+
+Since 2026-10-01 the same web code is wrapped as a native iPhone app with Capacitor 8 (Swift Package Manager, no CocoaPods). The website is unaffected: everything native checks `isNative` first.
+
+- **Identity.** `capacitor.config.json`: app id `com.paradoxdynamics.kaayi` (can't change after the first App Store upload), name Kaayi, `webDir: dist`, background `#0a0c10`, status bar overlaying the web view with light text, a 0.5 s splash. The web view's origin is `capacitor://localhost`.
+- **`ios/`** is the Xcode project (`ios/App/App.xcodeproj`), committed. `ios/App/App/public` is the copied web build and is gitignored. `Info.plist`: iPhone only, portrait only, `UIUserInterfaceStyle` Dark, `NSFaceIDUsageDescription`, `ITSAppUsesNonExemptEncryption` false (only standard HTTPS, so no export paperwork).
+- **Commands.** `npm run ios` = test + build + `cap sync ios` + open Xcode. `npm run cap:sync` builds and copies into every native project. After any web change, sync again before building in Xcode, or the app runs the old copy.
+- **Icon and splash.** Source art is `resources/icon.svg` and `resources/splash.svg` (a gold rounded tile on Onyx black with a dark balance line falling to a dot); `resources/icon.png` (1024, no transparency, which Apple rejects) and `splash.png` (2732) are rendered from them. They're installed in `ios/App/App/Assets.xcassets` (AppIcon-512@2x.png, the three Splash images). `public/apple-touch-icon.png` (180) and `public/favicon.png` (64) are the web versions.
+- **Native features** (`src/native.js`, wired in App.jsx):
+  - Haptics: `hapticTap` on tab/nav changes, `hapticResult` from `showToast` (success or error buzz).
+  - Invites use the share sheet (`shareText`, tried first in `sendInviteMessage`); invite texts say where to get Kaayi (`whereToGetKaayi()`).
+  - Backup and calendar files are written to the cache and handed to the share sheet (`saveFileNative`), since web downloads don't work in the app.
+  - **Reminders**: Account → Reminders is a switch in the app. `reminderEvents()` (shared with the web `.ics` download) feeds `setReminders`, which asks permission, clears the old ones and schedules a local notification at 9 am the day before each due date (repeating monthly on day−1, capped at 28; one-offs by date). iOS allows 64 pending, so it caps there.
+  - **Face ID lock**: Account → Security, app only. Turning it on verifies first (`verifyOwner`, passcode fallback). The setting is localStorage `kaayi-lock`. `App` shows `LockScreen` at launch and after more than 60 s in the background (`watchAppState`).
+- **Sign-in in the app.** Password and codes work as on the web. The Google button is hidden in the app (`isNative`), because Apple's guideline 4.8 would then also require Sign in with Apple. Email *links* open the website (Site URL), not the app, so codes are what app users rely on. The robot check stays on in the app. **Untested on a device:** Turnstile may reject the `capacitor://localhost` origin (error 110200); if so, add `localhost` to the widget's hostnames in Cloudflare.
+- **App Store needs (by Apple's rules):** a finance app must come from an organisation account (Paradox Dynamics, needs a D-U-N-S number), not an individual; in-app account deletion (done); a public privacy policy URL and support URL (not yet: needs a domain); built with Xcode 26 / the iOS 26 SDK (macOS Sequoia 15.6 or later). Android: `npx cap add android` when ready (the package is installed).
+
 ## If the bottom strip returns
 
 The normal-flow `100lvh` fix for the bottom strip (above) was confirmed working on the real phone in Home Screen mode on 2026-09-29, and Safari tab mode was unaffected. If a gap ever comes back at a screen edge there, first check that `index.html`'s `<meta name="viewport">` still includes `viewport-fit=cover`, which the page needs to draw under the safe areas at all.
@@ -105,4 +123,4 @@ The normal-flow `100lvh` fix for the bottom strip (above) was confirmed working 
 - The project owner isn't a developer — explain changes in plain language, not jargon.
 - This holds real, live loan balances. Treat any change to the calculation logic (interest, schedules, payoff strategy simulations) as high-stakes: verify it before calling it done. The same goes for `supabase/accounts-setup.sql`: re-run the multi-user access checks after any change to it.
 - The owner runs SQL in the Supabase SQL Editor and changes dashboard settings themselves. Never handle the `service_role` key.
-- Changes get tested on a real phone, both as a normal Safari tab and as an "Add to Home Screen" app — these can behave differently (see the fixed-positioning note above), so flag anything that might diverge between the two.
+- Changes get tested on a real phone, in the Kaayi iPhone app (from Xcode or TestFlight) and in Safari. These can behave differently, so flag anything that might diverge between them. The old "Add to Home Screen" app is no longer a target (the owner's call), but its fixes stay (see the fixed-positioning note above).

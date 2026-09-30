@@ -36,7 +36,7 @@ function stamp(d) {
 }
 
 export function buildCalendar(events, now = new Date()) {
-  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Ledger//Due dates//EN", "CALSCALE:GREGORIAN", "X-WR-CALNAME:Ledger due dates"];
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Kaayi//Due dates//EN", "CALSCALE:GREGORIAN", "X-WR-CALNAME:Kaayi due dates"];
   for (const ev of events) {
     let start;
     let rule = null;

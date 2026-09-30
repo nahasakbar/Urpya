@@ -1,0 +1,30 @@
+{
+  "appId": "com.paradoxdynamics.kaayi",
+  "appName": "Kaayi",
+  "webDir": "dist",
+  "backgroundColor": "#0a0c10",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#0a0c10",
+    "limitsNavigationsToAppBoundDomains": false
+  },
+  "android": {
+    "backgroundColor": "#0a0c10"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 500,
+      "launchAutoHide": true,
+      "backgroundColor": "#0a0c10",
+      "showSpinner": false
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#0a0c10",
+      "overlaysWebView": true
+    },
+    "LocalNotifications": {
+      "iconColor": "#e3bb6f"
+    }
+  }
+}

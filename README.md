@@ -1,10 +1,10 @@
-# Ledger
+# Kaayi
 
 A personal tracker for debts and income — bank loans, family loans,
-moneylender plans, rent, businesses — with a payoff Strategy. Each person has
+moneylender plans, rent, businesses — with a payoff plan. Each person has
 their own account, and any debt or income source can be shared with other
-people to manage it together. Hosted on Vercel, with data in a free Supabase
-database.
+people to manage it together. Made by Paradox Dynamics. It runs as a website
+(hosted on Vercel) and as an iPhone app, with data in Supabase.
 
 ## How it works
 
@@ -41,15 +41,15 @@ Do these in order. Nothing in the old ledger is changed until step 5.
      create an app password named "Supabase" and copy it.
    - In Supabase, open **Authentication → Emails → Set up SMTP**, switch on
      custom SMTP and fill in: sender email = the Gmail address, sender name =
-     `Ledger`, host = `smtp.gmail.com`, port = `465`, username = the Gmail
+     `Kaayi`, host = `smtp.gmail.com`, port = `465`, username = the Gmail
      address, password = the app password. Save.
 3. **Make the sign-in email show a code.** On the same **Authentication →
    Emails** page, change both the **Magic link or OTP** and the **Confirm
    sign up** templates to:
-   - Subject: `Your Ledger sign-in code`
+   - Subject: `Your Kaayi sign-in code`
    - Body:
      ```html
-     <h2>Your Ledger sign-in code</h2>
+     <h2>Your Kaayi sign-in code</h2>
      <p>Enter this code in the app to sign in:</p>
      <p style="font-size:28px;font-weight:bold;letter-spacing:4px">{{ .Token }}</p>
      <p>It expires in an hour. If you didn't ask for it, you can ignore this email.</p>
@@ -80,17 +80,17 @@ warning from Google.
 
 1. **Email templates** (Supabase → Authentication → Emails). Each needs the
    code, `{{ .Token }}`, rather than a link:
-   - **Confirm sign up** (new accounts). Subject `Confirm your Ledger
+   - **Confirm sign up** (new accounts). Subject `Confirm your Kaayi
      account`; body:
      ```html
-     <h2>Confirm your Ledger account</h2>
+     <h2>Confirm your Kaayi account</h2>
      <p>Enter this code in the app to confirm your email:</p>
      <p style="font-size:28px;font-weight:bold;letter-spacing:4px">{{ .Token }}</p>
      <p>It expires in an hour. If you didn't sign up, you can ignore this email.</p>
      ```
-   - **Reset password**. Subject `Reset your Ledger password`; body:
+   - **Reset password**. Subject `Reset your Kaayi password`; body:
      ```html
-     <h2>Reset your Ledger password</h2>
+     <h2>Reset your Kaayi password</h2>
      <p>Enter this code in the app, then choose a new password:</p>
      <p style="font-size:28px;font-weight:bold;letter-spacing:4px">{{ .Token }}</p>
      <p>It expires in an hour. If you didn't ask for it, you can ignore this email.</p>
@@ -100,7 +100,7 @@ warning from Google.
 
    Supabase sometimes can't load a saved template and sends its own
    original email, with a link instead of a code. The link works too: it
-   opens Ledger signed in (or, from a password reset, on "Set a new
+   opens Kaayi signed in (or, from a password reset, on "Set a new
    password"). For that, step 2 below must be done.
 2. **Set the app's address** (Supabase → Authentication → URL
    Configuration): **Site URL** = the app's address (e.g.
@@ -114,7 +114,7 @@ warning from Google.
    switched on in Supabase:
    - In [Google Cloud Console](https://console.cloud.google.com), create a
      project, then **APIs & Services → OAuth consent screen**: External, app
-     name `Ledger`, your email as support and developer contact; publish it
+     name `Kaayi`, your email as support and developer contact; publish it
      ("In production").
    - **Credentials → Create credentials → OAuth client ID → Web
      application.** Under **Authorized redirect URIs** add
@@ -137,13 +137,16 @@ For when people outside the family start using it:
    Rate Limits** and set the limit for sending emails to about 20 an hour.
 3. **Turn on the robot check** (Cloudflare Turnstile, free, no domain needed):
    - At [dash.cloudflare.com](https://dash.cloudflare.com) (free account),
-     open **Turnstile → Add widget**. Name it `Ledger`, add your app's web
+     open **Turnstile → Add widget**. Name it `Kaayi`, add your app's web
      address (e.g. `yourapp.vercel.app`) as the hostname, choose
      **Managed**, and create it. It gives a **Site key** and a **Secret key**.
-   - The app needs the **Site key** (it isn't secret). Ledger's is already in
+   - The app needs the **Site key** (it isn't secret). Kaayi's is already in
      `src/App.jsx` (`LEDGER_TURNSTILE_KEY`); a Vercel environment variable
      `VITE_TURNSTILE_SITE_KEY` would override it. On this computer
      (localhost) the check is off.
+   - The iPhone app runs from the address `localhost` inside the phone. If
+     its sign-in screen says "The robot check couldn't run here", add
+     `localhost` to the widget's hostnames in Cloudflare too.
    - Open the live app's sign-in screen. If it says "The robot check couldn't
      run here", the web address is missing from the widget's hostnames in
      Cloudflare. Once there's no such message and you can sign in, then, and
@@ -171,8 +174,48 @@ To run it on your computer: copy `.env.example` to `.env.local`, fill in the
 same two values, then `npm install` and `npm run dev`. `npm test` runs the
 checks.
 
-## On an iPhone
+## In Safari on an iPhone
 
-Open the link in **Safari**, tap **Share → Add to Home Screen**. It opens
-full-screen like an app. **Account → Add due dates to my calendar** puts each
-debt's due date in the iPhone Calendar with an alert the day before.
+Open the website's link in **Safari**. **Account → Add due dates to my
+calendar** puts each debt's due date in the iPhone Calendar with an alert the
+day before.
+
+## The iPhone app
+
+The app is the same code as the website, wrapped by Capacitor into a real
+iPhone app. The Xcode project is in `ios/`. In the app you also get reminders
+as notifications, a Face ID lock, the share sheet for invites and backups,
+and little vibrations on taps and saves.
+
+**Building it on this Mac** (needs Xcode 26, which needs macOS Sequoia 15.6
+or later):
+
+1. In Terminal, in this folder: `npm install`, then `npm run ios`. That runs
+   the checks, builds the website, copies it into the iPhone project and
+   opens Xcode.
+2. In Xcode, pick your iPhone (plugged in) at the top, then press ▶. The
+   first time, Xcode asks you to choose a **Team** under **Signing &
+   Capabilities**: pick Paradox Dynamics once its developer account exists.
+3. After changing the website's code, run `npm run ios` again, or the app
+   keeps the old copy.
+
+**Getting it into the App Store**, in order:
+
+1. **D-U-N-S number** for Paradox Dynamics (free, from Dun & Bradstreet via
+   Apple's lookup page; takes up to about two weeks). Apple requires money
+   apps to come from a company, not a person.
+2. **Apple Developer Program** as an organisation (£79 a year), using the
+   company's exact registered name and the D-U-N-S number.
+3. **A website domain and email** (e.g. kaayi.app and support@…). The App
+   Store listing needs a public privacy policy page and a support page.
+4. In **App Store Connect**, create the app with bundle ID
+   `com.paradoxdynamics.kaayi`, fill in the privacy questions (Kaayi stores
+   email, name and the money details you enter; nothing is used for
+   tracking or ads), and add screenshots.
+5. In Xcode: **Product → Archive**, then **Distribute App → App Store
+   Connect**. Test it through **TestFlight** first, then submit for review.
+6. When reviewing, Apple signs in to try the app. Give them a test account
+   (email and password) with some sample debts in it, in the review notes.
+
+The app icon's source is `resources/icon.svg`. The website's icons are in
+`public/`.

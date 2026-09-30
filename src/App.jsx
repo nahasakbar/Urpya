@@ -83,6 +83,21 @@ import {
 import { styles } from "./styles.js";
 import { Amount } from "./motion.jsx";
 import { AreaChart, BarPairs, Ring, SegmentBar } from "./charts.jsx";
+import {
+  isNative,
+  hapticTap,
+  hapticResult,
+  shareText,
+  saveFileNative,
+  setReminders,
+  clearReminders,
+  remindersSet,
+  lockEnabled,
+  setLockEnabled,
+  biometricKind,
+  verifyOwner,
+  watchAppState,
+} from "./native.js";
 
 
 function ConfirmButton({ onConfirm, label }) {
@@ -1236,9 +1251,10 @@ function nameFromEmail(email) {
 // Sends an invite through the phone's share sheet, else copies it, else opens
 // an email. Returns "copied" when it was copied, so the caller can say so.
 async function sendInviteMessage(to, text) {
+  if (await shareText("Kaayi", text)) return "shared";
   try {
     if (navigator.share) {
-      await navigator.share({ title: "Ledger", text });
+      await navigator.share({ title: "Kaayi", text });
       return "shared";
     }
   } catch (e) {
@@ -1248,12 +1264,22 @@ async function sendInviteMessage(to, text) {
     await navigator.clipboard.writeText(text);
     return "copied";
   } catch (e) {
-    window.location.href = `mailto:${to}?subject=${encodeURIComponent("Ledger")}&body=${encodeURIComponent(text)}`;
+    window.location.href = `mailto:${to}?subject=${encodeURIComponent("Kaayi")}&body=${encodeURIComponent(text)}`;
     return "mail";
   }
 }
 
 const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Where someone you invite can get Kaayi. In the browser this is the site
+// itself; inside the iPhone app (whose own address is capacitor://localhost)
+// it's VITE_PUBLIC_URL, set when the app is built, or else the App Store.
+function whereToGetKaayi() {
+  const site =
+    import.meta.env.VITE_PUBLIC_URL ||
+    (typeof window !== "undefined" && /^https?:$/.test(window.location.protocol) ? window.location.origin : "");
+  return site ? `Open ${site}` : "Get Kaayi from the App Store";
+}
 
 // Inviting someone new by their email (Account → People, or from a debt).
 // No name is asked for: once they sign up, they show under the one they give.
@@ -1323,10 +1349,8 @@ function SharePanel({ itemName, a, myEmail, people, onAccess, onInvite, onUnshar
   const [inviting, setInviting] = useState(false);
   const [busy, setBusy] = useState(null);
   const [copied, setCopied] = useState(false);
-  const appUrl = typeof window !== "undefined" ? window.location.origin : "";
-
   async function invite(to) {
-    const text = `I've shared “${itemName}” with you on Ledger. Open ${appUrl} and sign up or sign in with ${to} to see it.`;
+    const text = `I've shared “${itemName}” with you on Kaayi. ${whereToGetKaayi()} and sign up or sign in with ${to} to see it.`;
     setCopied((await sendInviteMessage(to, text)) === "copied");
   }
 
@@ -1518,11 +1542,11 @@ function GettingStartedSteps() {
 function PrivacyNote() {
   return (
     <div className="fl-prose">
-      <p className="fl-panel-title fl-serif">What Ledger keeps</p>
+      <p className="fl-panel-title fl-serif">What Kaayi keeps</p>
       <p>
         Your name and email address; your password, stored scrambled so nobody can read it (not even the person
-        who runs Ledger); and what you type in: debts, payments, income, your budget and the names you add. If you
-        sign in with Google, Ledger gets only your name and email address from Google. Nothing else — no contacts,
+        who runs Kaayi); and what you type in: debts, payments, income, your budget and the names you add. If you
+        sign in with Google, Kaayi gets only your name and email address from Google. Nothing else — no contacts,
         no location and no bank connection.
       </p>
       <p className="fl-panel-title fl-serif">Who can see it</p>
@@ -1534,7 +1558,7 @@ function PrivacyNote() {
       <p>
         Everything is stored with Supabase, a database hosting company, and emails with codes (to confirm your email
         or reset your password) are sent through Gmail. The
-        person who runs Ledger can reach the database, as with any website, but doesn’t look at or share what’s in
+        company that runs Kaayi, Paradox Dynamics, can reach the database, as with any website, but doesn’t look at or share what’s in
         it. There are no ads, and nothing is sold or used to track you.
         {TURNSTILE_SITE_KEY && " The sign-in page uses Cloudflare Turnstile to check you’re a person, not a bot."}
       </p>
@@ -1550,7 +1574,7 @@ function PrivacyNote() {
         anything important with your lender.
       </p>
       <p className="fl-panel-title fl-serif">Questions</p>
-      <p>Reply to any email from Ledger.</p>
+      <p>Kaayi is run by Paradox Dynamics. Questions or requests about your data: reply to any email from Kaayi.</p>
     </div>
   );
 }
@@ -1563,7 +1587,7 @@ function DeleteAccountPanel({ onDelete }) {
   return (
     <div className="fl-panel">
       <p className="fl-card-sub" style={{ marginBottom: 10 }}>
-        Deletes your account and everything you own in Ledger: every debt and income source, all their monthly
+        Deletes your account and everything you own in Kaayi: every debt and income source, all their monthly
         entries and history, and your settings. People you’ve shared them with lose them too. This can’t be undone,
         so download a backup first if you might want it.
       </p>
@@ -1601,8 +1625,10 @@ function DeleteAccountPanel({ onDelete }) {
 // of the widget's hostnames); VITE_TURNSTILE_SITE_KEY overrides it, e.g. with
 // Cloudflare's always-pass test key for local testing.
 const LEDGER_TURNSTILE_KEY = "0x4AAAAAAFJk5k_Kq87TX9qt";
+// (The iPhone app's own address is also "localhost", but the check must run
+// there: Supabase refuses sign-ins without it.)
 const onLocalhost =
-  typeof window !== "undefined" && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
+  !isNative && typeof window !== "undefined" && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
 const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY || (onLocalhost ? "" : LEDGER_TURNSTILE_KEY);
 
 let turnstileLoading = null;
@@ -1716,9 +1742,9 @@ function PasswordField({ label, value, onChange, onEnter, autoComplete }) {
 function TermsNote() {
   return (
     <div className="fl-prose">
-      <p className="fl-panel-title fl-serif">Using Ledger</p>
+      <p className="fl-panel-title fl-serif">Using Kaayi</p>
       <p>
-        Ledger is a free tool to help you keep track of your debts and income and plan how to pay them off. You’re
+        Kaayi is made by Paradox Dynamics to help you keep track of your debts and income and plan how to pay them off. You’re
         welcome to use it for yourself and to share items with the people you manage them with.
       </p>
       <p className="fl-panel-title fl-serif">Not financial advice</p>
@@ -1729,16 +1755,16 @@ function TermsNote() {
       <p className="fl-panel-title fl-serif">Your part</p>
       <p>
         You’re responsible for what you enter and who you share it with. Keep your password to yourself, and don’t
-        use Ledger for anything unlawful or to store other people’s details without their agreement. Accounts that
+        use Kaayi for anything unlawful or to store other people’s details without their agreement. Accounts that
         are misused may be removed.
       </p>
       <p className="fl-panel-title fl-serif">No guarantees</p>
       <p>
-        Ledger is provided as it is. It’s looked after carefully, but it may sometimes be unavailable or have
+        Kaayi is provided as it is. It’s looked after carefully, but it may sometimes be unavailable or have
         mistakes, so keep your own copy (Account → Download a backup). You can delete your account at any time.
       </p>
       <p className="fl-panel-title fl-serif">Changes</p>
-      <p>These terms may be updated; the app always shows the latest. Questions: reply to any email from Ledger.</p>
+      <p>These terms may be updated; the app always shows the latest. Questions: reply to any email from Kaayi.</p>
     </div>
   );
 }
@@ -1770,7 +1796,9 @@ function SignIn({ notice, onHold, recoveryEmail }) {
   const cleanEmail = email.trim().toLowerCase();
 
   useEffect(() => {
-    loadAuthSettings().then((s) => setGoogleOn(!!(s && s.external && s.external.google)));
+    // Not in the iPhone app yet: Google sign-in there needs its own setup, and
+    // Apple then requires Sign in with Apple as well.
+    loadAuthSettings().then((s) => setGoogleOn(!isNative && !!(s && s.external && s.external.google)));
     // Back from Google or an email link with an error (sign-in cancelled, or
     // a link that has expired or was already used).
     const params = new URLSearchParams(window.location.hash.slice(1) + "&" + window.location.search.slice(1));
@@ -2023,7 +2051,7 @@ function SignIn({ notice, onHold, recoveryEmail }) {
       <div className="ox-auth-wrap">
         <div className="fl-auth" key={stage}>
           <div className="ox-auth-brand">
-            <span className="ox-brand-mark" aria-hidden="true" /> Ledger
+            <span className="ox-brand-mark" aria-hidden="true" /> Kaayi
           </div>
           {!(stage === "signin" || (stage === "reset" && resetVerified)) && (
             // Once a reset code or link has signed in, the way on is saving
@@ -2281,7 +2309,7 @@ function LoadingSkeleton() {
     <div className="ox-app" aria-busy="true" aria-label="Loading your ledger">
       <aside className="ox-sidebar">
         <div className="ox-brand">
-          <span className="ox-brand-mark" aria-hidden="true" /> Ledger
+          <span className="ox-brand-mark" aria-hidden="true" /> Kaayi
         </div>
         {[0, 1, 2, 3, 4].map((i) => (
           <div key={i}>{bar("100%", 38, { margin: "4px 0" })}</div>
@@ -2325,6 +2353,32 @@ function LoadingSkeleton() {
   );
 }
 
+// Covers the app until Face ID (or the passcode) passes, when the lock is on.
+function LockScreen({ onUnlock }) {
+  const [trying, setTrying] = useState(false);
+  async function unlock() {
+    if (trying) return;
+    setTrying(true);
+    const ok = await verifyOwner();
+    setTrying(false);
+    if (ok) onUnlock();
+  }
+  useEffect(() => {
+    unlock();
+    // Ask straight away once, when the lock screen appears.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <div className="ox-lock" role="dialog" aria-modal="true" aria-label="Kaayi is locked">
+      <span className="ox-brand-mark ox-splash-mark" aria-hidden="true" />
+      <p className="ox-lock-title">Kaayi is locked</p>
+      <button className="fl-btn" style={{ flex: "0 0 auto" }} onClick={unlock} disabled={trying}>
+        {trying ? "Checking…" : "Unlock"}
+      </button>
+    </div>
+  );
+}
+
 // Signed-in person → their ledger; otherwise the sign-in screen.
 export default function App() {
   const [session, setSession] = useState(undefined);
@@ -2333,6 +2387,22 @@ export default function App() {
   // the new password before opening the app.
   const [recovering, setRecovering] = useState(openedFromEmailLink === "recovery");
   const [hold, setHold] = useState(openedFromEmailLink === "recovery");
+  // The Face ID lock (iPhone app only): locked at launch when it's on, and
+  // again after more than a minute in the background.
+  const [locked, setLocked] = useState(lockEnabled());
+  useEffect(() => {
+    let leftAt = 0;
+    let stop = () => {};
+    watchAppState(
+      () => {
+        leftAt = Date.now();
+      },
+      () => {
+        if (lockEnabled() && leftAt && Date.now() - leftAt > 60000) setLocked(true);
+      }
+    ).then((fn) => (stop = fn));
+    return () => stop();
+  }, []);
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       // A reset link that didn't sign in (e.g. expired): nothing to wait for.
@@ -2374,11 +2444,14 @@ export default function App() {
     );
   }
   return (
-    <Ledger
-      key={session.user.id}
-      user={session.user}
-      onAccountDeleted={() => setNotice("Your account and everything in it has been deleted.")}
-    />
+    <>
+      <Ledger
+        key={session.user.id}
+        user={session.user}
+        onAccountDeleted={() => setNotice("Your account and everything in it has been deleted.")}
+      />
+      {locked && <LockScreen onUnlock={() => setLocked(false)} />}
+    </>
   );
 }
 
@@ -2436,6 +2509,15 @@ function Ledger({ user, onAccountDeleted }) {
   // and the tab bar's highlight, which slides to the current tab.
   const [addMenu, setAddMenu] = useState(null);
   const [editingName, setEditingName] = useState(false);
+  // In the iPhone app: how many due-date reminders are set, and the Face ID lock.
+  const [remindersOn, setRemindersOn] = useState(0);
+  const [lockOn, setLockOn] = useState(lockEnabled());
+  const [lockKind, setLockKind] = useState(null);
+  useEffect(() => {
+    if (!isNative) return;
+    remindersSet().then(setRemindersOn);
+    biometricKind().then(setLockKind);
+  }, []);
   const [scrolled, setScrolled] = useState(false);
   const [navPill, setNavPill] = useState(null);
   const contentRef = useRef(null);
@@ -2494,6 +2576,7 @@ function Ledger({ user, onAccountDeleted }) {
       ? "info"
       : "done";
     setToast({ msg, undo, tone, id: Date.now() });
+    if (tone !== "info") hapticResult(tone !== "error");
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), ms);
   }
@@ -3178,6 +3261,13 @@ function Ledger({ user, onAccountDeleted }) {
   }
 
   function saveFile(name, type, text) {
+    if (isNative) {
+      saveFileNative(name, text).catch((e) => {
+        console.error("save file failed", e);
+        showToast("Couldn’t save the file — try again", null, 4000);
+      });
+      return;
+    }
     const url = URL.createObjectURL(new Blob([text], { type }));
     const a = document.createElement("a");
     a.href = url;
@@ -3188,9 +3278,10 @@ function Ledger({ user, onAccountDeleted }) {
     setTimeout(() => URL.revokeObjectURL(url), 10000);
   }
 
-  // A calendar file with each debt's due date: repeating monthly at the
-  // amount it asks for, or month by month for a repayment plan.
-  function downloadCalendar() {
+  // Each debt's due date: repeating monthly at the amount it asks for, or
+  // month by month for a repayment plan. Used for the calendar file (web) and
+  // the phone's notifications (app).
+  function reminderEvents() {
     const events = [];
     for (const l of lenderSummaries) {
       if (!l.dueDay || l.remaining <= 0.5) continue;
@@ -3210,22 +3301,62 @@ function Ledger({ user, onAccountDeleted }) {
           title: pay && !pay.fromPlan ? `${l.name}: ${fmt(pay.amount)} due` : `${l.name}: payment due`,
           day: l.dueDay,
           fromKey: asOfKey,
-          description: "From your Ledger. If the amount changes, add the reminders again.",
+          description: "From Kaayi. If the amount changes, add the reminders again.",
         });
       }
     }
+    return events;
+  }
+
+  function downloadCalendar() {
+    const events = reminderEvents();
     if (events.length === 0) {
       showToast("No due dates yet — set a due day on your debts first", null, 4000);
       return;
     }
-    saveFile("ledger-due-dates.ics", "text/calendar", buildCalendar(events));
+    saveFile("kaayi-due-dates.ics", "text/calendar", buildCalendar(events));
+  }
+
+  async function turnOnReminders() {
+    const events = reminderEvents();
+    if (events.length === 0) {
+      showToast("No due dates yet — set a due day on your debts first", null, 4000);
+      return;
+    }
+    try {
+      const n = await setReminders(events);
+      if (n == null) {
+        showToast("Notifications are off for Kaayi — turn them on in Settings", null, 5000);
+        return;
+      }
+      setRemindersOn(n);
+      showToast(`${n} reminder${n === 1 ? "" : "s"} set`);
+    } catch (e) {
+      console.error("reminders failed", e);
+      showToast("Couldn’t set reminders — try again", null, 4000);
+    }
+  }
+  async function turnOffReminders() {
+    try {
+      await clearReminders();
+      setRemindersOn(0);
+      showToast("Reminders turned off");
+    } catch (e) {
+      console.error("clear reminders failed", e);
+    }
+  }
+  async function toggleLock(on) {
+    if (on && !(await verifyOwner("Turn on the lock for Kaayi"))) return;
+    setLockEnabled(on);
+    setLockOn(on);
+    showToast(on ? `Kaayi will ask for ${lockKind || "Face ID"}` : "Lock turned off");
   }
 
   async function downloadBackup() {
     try {
       const rows = await store.loadEverything();
       const stamp = new Date().toISOString().slice(0, 10);
-      saveFile(`ledger-backup-${stamp}.json`, "application/json", JSON.stringify({ exportedAt: new Date().toISOString(), by: myEmail, ...rows }, null, 2));
+      saveFile(`kaayi-backup-${stamp}.json`, "application/json", JSON.stringify({ exportedAt: new Date().toISOString(), by: myEmail, ...rows }, null, 2));
     } catch (e) {
       console.error("backup failed", e);
       showToast("Couldn’t make the backup — try again", null, 4000);
@@ -3441,6 +3572,7 @@ function Ledger({ user, onAccountDeleted }) {
     ["strategy", "Plan", Target],
   ];
   function go(next) {
+    hapticTap();
     setView(next);
     if (next === "account") loadAccountLists();
     if (contentRef.current) contentRef.current.scrollTop = 0;
@@ -3515,7 +3647,7 @@ function Ledger({ user, onAccountDeleted }) {
       <div className="ox-app">
         <aside className="ox-sidebar" aria-label="Main">
           <div className="ox-brand">
-            <span className="ox-brand-mark" aria-hidden="true" /> Ledger
+            <span className="ox-brand-mark" aria-hidden="true" /> Kaayi
           </div>
           <button className="fl-btn ox-side-add" onClick={() => setAddMenu("menu")}>
             <Plus size={18} /> Add
@@ -3561,7 +3693,7 @@ function Ledger({ user, onAccountDeleted }) {
               ) : (
                 <>
                   <p className="ox-eyebrow">{EYEBROWS[view] || ""}</p>
-                  <h1 className="fl-title">{TITLES[view] || "Ledger"}</h1>
+                  <h1 className="fl-title">{TITLES[view] || "Kaayi"}</h1>
                 </>
               )}
             </div>
@@ -3588,7 +3720,7 @@ function Ledger({ user, onAccountDeleted }) {
               <Wallet size={26} />
             </div>
             <h2 className="fl-title" style={{ whiteSpace: "normal", marginBottom: 8 }}>
-              Welcome to Ledger
+              Welcome to Kaayi
             </h2>
             {canImport ? (
               <>
@@ -4364,17 +4496,50 @@ function Ledger({ user, onAccountDeleted }) {
             )}
 
             <p className="fl-section-title">Reminders</p>
-            <div className="fl-panel">
-              <p className="fl-card-sub" style={{ marginBottom: 10 }}>
-                Add each debt’s monthly due date to your phone’s calendar, with an alert at 9 am the day before. Debts
-                need a due day set. If amounts change, add them again.
-              </p>
-              <div className="fl-form-actions">
-                <button className="fl-btn" onClick={downloadCalendar}>
-                  <CalendarPlus size={14} /> Add due dates to my calendar
-                </button>
+            {isNative ? (
+              <div className="fl-panel">
+                <div className="fl-switch-row">
+                  <span className="fl-switch-label">Remind me before due dates</span>
+                  <Switch
+                    on={remindersOn > 0}
+                    onChange={(on) => (on ? turnOnReminders() : turnOffReminders())}
+                    label="Remind me before due dates"
+                  />
+                </div>
+                <p className="fl-card-sub">
+                  {remindersOn > 0
+                    ? `${remindersOn} reminder${remindersOn === 1 ? "" : "s"} set, at 9 am the day before each payment. After changing a due day or amount, turn this off and on again.`
+                    : "A notification at 9 am the day before each debt’s payment is due. Debts need a due day set."}
+                </p>
               </div>
-            </div>
+            ) : (
+              <div className="fl-panel">
+                <p className="fl-card-sub" style={{ marginBottom: 10 }}>
+                  Add each debt’s monthly due date to your phone’s calendar, with an alert at 9 am the day before. Debts
+                  need a due day set. If amounts change, add them again.
+                </p>
+                <div className="fl-form-actions">
+                  <button className="fl-btn" onClick={downloadCalendar}>
+                    <CalendarPlus size={14} /> Add due dates to my calendar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {isNative && lockKind && (
+              <>
+                <p className="fl-section-title">Security</p>
+                <div className="fl-panel">
+                  <div className="fl-switch-row">
+                    <span className="fl-switch-label">Lock with {lockKind}</span>
+                    <Switch on={lockOn} onChange={toggleLock} label={"Lock with " + lockKind} />
+                  </div>
+                  <p className="fl-card-sub">
+                    Asks for {lockKind} when you open Kaayi, and when you come back after more than a minute away.
+                  </p>
+                </div>
+              </>
+            )}
 
             <p className="fl-section-title">People</p>
             <p className="fl-card-sub" style={{ margin: "-4px 2px 12px" }}>
@@ -4439,7 +4604,7 @@ function Ledger({ user, onAccountDeleted }) {
                       onClick={() =>
                         sendInviteMessage(
                           person.email,
-                          `I've invited you to Ledger. Open ${window.location.origin} and sign up with ${person.email} to see what I share with you.`
+                          `I've invited you to Kaayi. ${whereToGetKaayi()} and sign up with ${person.email} to see what I share with you.`
                         ).then((how) => how === "copied" && showToast("Invite copied — paste it into a message", null, 3000))
                       }
                       aria-label={"Send " + person.name + " an invite"}
@@ -4521,7 +4686,7 @@ function Ledger({ user, onAccountDeleted }) {
             <p className="fl-section-title">Privacy</p>
             <div className="fl-panel">
               <p className="fl-card-sub" style={{ marginBottom: 10 }}>
-                What Ledger keeps, who can see it, and how to take it with you or delete it.
+                What Kaayi keeps, who can see it, and how to take it with you or delete it.
               </p>
               <div className="fl-form-actions">
                 <button className="fl-btn secondary" onClick={() => setShowPrivacy(true)}>
@@ -5349,7 +5514,14 @@ function Ledger({ user, onAccountDeleted }) {
             <Landmark size={21} />
             Debts
           </button>
-          <button className="ox-nav-add" onClick={() => setAddMenu("menu")} aria-label="Add">
+          <button
+            className="ox-nav-add"
+            onClick={() => {
+              hapticTap();
+              setAddMenu("menu");
+            }}
+            aria-label="Add"
+          >
             <Plus size={24} />
           </button>
           <button
