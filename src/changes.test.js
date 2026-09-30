@@ -32,6 +32,9 @@ describe("Undo", () => {
 
     const currency = { ...base, currency: "AED" };
     expect(undoOf(base, currency, currency)).toEqual({ ...base, currency: undefined });
+
+    const invited = { ...base, contacts: [{ name: "Riyas", email: "riyas@example.com" }] };
+    expect(undoOf(base, invited, invited)).toEqual({ ...base, contacts: undefined });
   });
 
   it("leaves alone anything someone else changed in the meantime", () => {

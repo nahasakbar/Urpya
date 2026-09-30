@@ -43,7 +43,7 @@ export function undoOf(prev, next, current) {
     }
     out[key] = result;
   }
-  for (const key of ["people", "strategy", "currency"]) {
+  for (const key of ["people", "strategy", "currency", "contacts"]) {
     if (!same(prev[key], next[key])) out[key] = prev[key];
   }
   return out;

@@ -1214,41 +1214,134 @@ function SharedChip({ a }) {
   return null;
 }
 
-// Sharing controls for one debt or income source: the owner adds or removes
-// people (can edit / view only); someone it's shared with can leave.
-function SharePanel({ itemName, a, myEmail, onShare, onUnshare, kindLabel }) {
+// Initials for an avatar: "Nahas Akbar" → "NA".
+function initialsOf(name) {
+  return (
+    String(name || "?")
+      .trim()
+      .split(/\s+/)
+      .map((w) => w.charAt(0))
+      .join("")
+      .slice(0, 2)
+      .toUpperCase() || "?"
+  );
+}
+
+// A readable name from an email when nobody has given one: "riyas.k@…" → "Riyas k".
+function nameFromEmail(email) {
+  const local = String(email || "").split("@")[0].replace(/[._-]+/g, " ").trim() || "Someone";
+  return local.charAt(0).toUpperCase() + local.slice(1);
+}
+
+// Sends an invite through the phone's share sheet, else copies it, else opens
+// an email. Returns "copied" when it was copied, so the caller can say so.
+async function sendInviteMessage(to, text) {
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: "Ledger", text });
+      return "shared";
+    }
+  } catch (e) {
+    if (e && e.name === "AbortError") return "cancelled";
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    return "copied";
+  } catch (e) {
+    window.location.href = `mailto:${to}?subject=${encodeURIComponent("Ledger")}&body=${encodeURIComponent(text)}`;
+    return "mail";
+  }
+}
+
+const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Name + email for inviting someone new (Account → People, or from a debt).
+function InvitePersonForm({ onInvite, onCancel, withRole = false, submitLabel = "Invite" }) {
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("editor");
-  const [justShared, setJustShared] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const valid = name.trim() && EMAIL_OK.test(email.trim());
+  async function submit() {
+    if (!valid || busy) return;
+    setBusy(true);
+    const ok = await onInvite(name.trim(), email.trim().toLowerCase(), role);
+    setBusy(false);
+    if (ok) {
+      setName("");
+      setEmail("");
+    }
+  }
+  return (
+    <div>
+      <div className="fl-field">
+        <label>Their name</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" placeholder="e.g. Riyas" />
+      </div>
+      <div className="fl-field">
+        <label>Their email</label>
+        <input
+          type="email"
+          inputMode="email"
+          autoCapitalize="none"
+          autoCorrect="off"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && submit()}
+          placeholder="name@example.com"
+        />
+      </div>
+      {withRole && (
+        <div className="fl-tag-picker" style={{ marginBottom: 14 }}>
+          {[
+            ["editor", "Can edit"],
+            ["viewer", "View only"],
+          ].map(([r, label]) => (
+            <button
+              key={r}
+              type="button"
+              className={"fl-tag-option" + (role === r ? " selected" : "")}
+              aria-pressed={role === r}
+              onClick={() => setRole(r)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="fl-form-actions">
+        {onCancel && (
+          <button className="fl-btn secondary" onClick={onCancel} disabled={busy}>
+            Cancel
+          </button>
+        )}
+        <button className="fl-btn" onClick={submit} disabled={!valid || busy}>
+          <Plus size={16} /> {busy ? "Adding…" : submitLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Who can see one debt or income source. The owner picks from their people
+// (not shared / can edit / view only) or invites someone new; someone it's
+// shared with sees who shared it and can leave.
+function SharePanel({ itemName, a, myEmail, people, onAccess, onInvite, onUnshare, kindLabel }) {
+  const [inviting, setInviting] = useState(false);
+  const [busy, setBusy] = useState(null);
+  const [copied, setCopied] = useState(false);
   const appUrl = typeof window !== "undefined" ? window.location.origin : "";
 
-  function inviteText(to) {
-    return `I've shared “${itemName}” with you on Ledger. Open ${appUrl} and sign in with ${to} to see it.`;
-  }
-
-  async function sendInvite(to) {
-    const text = inviteText(to);
-    try {
-      if (navigator.share) {
-        await navigator.share({ title: "Ledger", text });
-        return;
-      }
-    } catch (e) {
-      if (e && e.name === "AbortError") return;
-    }
-    try {
-      await navigator.clipboard.writeText(text);
-      setJustShared({ email: to, copied: true });
-    } catch (e) {
-      window.location.href = `mailto:${to}?subject=${encodeURIComponent("Ledger")}&body=${encodeURIComponent(text)}`;
-    }
+  async function invite(to) {
+    const text = `I've shared “${itemName}” with you on Ledger. Open ${appUrl} and sign up or sign in with ${to} to see it.`;
+    setCopied((await sendInviteMessage(to, text)) === "copied");
   }
 
   if (!a.owner) {
     return (
       <div className="fl-panel">
-        <p className="fl-panel-title fl-serif">Shared with you</p>
-        <p className="fl-card-sub" style={{ marginBottom: 10 }}>
+        <p className="fl-panel-title">Shared with you</p>
+        <p className="fl-card-sub" style={{ marginBottom: 12 }}>
           {a.ownerEmail} shared this {kindLabel} with you — you can {a.canEdit ? "record and edit" : "only view"} it.
         </p>
         <div className="fl-form-actions">
@@ -1258,82 +1351,113 @@ function SharePanel({ itemName, a, myEmail, onShare, onUnshare, kindLabel }) {
     );
   }
 
-  const valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const roleOf = (email) => (a.shares.find((sh) => sh.email === email) || {}).role || "none";
   return (
     <div className="fl-panel">
-      <p className="fl-panel-title fl-serif">Sharing</p>
-      {a.shares.length === 0 && (
-        <p className="fl-card-sub" style={{ marginBottom: 10 }}>
-          Only you can see this {kindLabel}. Share it with someone to manage it together.
+      <p className="fl-panel-title">Who can see this</p>
+      <p className="fl-card-sub" style={{ marginBottom: 12 }}>
+        {a.shares.length === 0
+          ? `Only you can see this ${kindLabel}. Choose people to manage it with.`
+          : `Shared with ${a.shares.length} ${a.shares.length === 1 ? "person" : "people"}. They see it, its months and its history.`}
+      </p>
+      {people.length > 0 && (
+        <div className="ox-list">
+          {people.map((p) => {
+            const role = roleOf(p.email);
+            return (
+              <div className="ox-row ox-person" key={p.email}>
+                <span className={"ox-avatar sm" + (role === "none" ? " muted" : "")} aria-hidden="true">
+                  {initialsOf(p.name)}
+                </span>
+                <span className="ox-row-main">
+                  <span className="ox-row-name">{p.name}</span>
+                  <span className="ox-row-sub">{p.email}</span>
+                </span>
+                {role !== "none" && (
+                  <button className="fl-icon-btn" onClick={() => invite(p.email)} aria-label={"Send " + p.name + " an invite"}>
+                    <Mail size={16} />
+                  </button>
+                )}
+                <select
+                  className={"ox-access" + (role !== "none" ? " on" : "")}
+                  value={role}
+                  disabled={busy === p.email}
+                  aria-label={"What " + p.name + " can do"}
+                  onChange={async (e) => {
+                    setBusy(p.email);
+                    await onAccess(p.email, e.target.value, p.name);
+                    setBusy(null);
+                  }}
+                >
+                  <option value="none">Not shared</option>
+                  <option value="editor">Can edit</option>
+                  <option value="viewer">View only</option>
+                </select>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {inviting ? (
+        <div style={{ marginTop: 16 }}>
+          <InvitePersonForm
+            withRole
+            submitLabel="Invite and share"
+            onCancel={() => setInviting(false)}
+            onInvite={async (name, email, role) => {
+              const ok = await onInvite(name, email, role);
+              if (ok) setInviting(false);
+              return ok;
+            }}
+          />
+        </div>
+      ) : (
+        <button className="fl-add-row" onClick={() => setInviting(true)}>
+          <Plus size={16} /> {people.length ? "Invite someone new" : "Invite someone"}
+        </button>
+      )}
+      {copied && (
+        <p className="fl-card-sub" style={{ marginTop: 10 }}>
+          Invite copied — paste it into WhatsApp or a message.
         </p>
       )}
-      {a.shares.map((sh) => (
-        <div className="fl-share-row" key={sh.email}>
-          <span className="fl-share-email">
-            {sh.email}
-            <span className="fl-card-sub"> · {sh.role === "viewer" ? "view only" : "can edit"}</span>
-          </span>
-          <button className="fl-icon-btn" onClick={() => sendInvite(sh.email)} aria-label={"Send invite to " + sh.email}>
-            <Mail size={16} />
-          </button>
-          <ConfirmButton label={"stop sharing with " + sh.email} onConfirm={() => onUnshare(sh.email, false)} />
-        </div>
-      ))}
-      <div className="fl-field" style={{ marginTop: 10 }}>
-        <label>Share with (their email)</label>
-        <input
-          type="email"
-          inputMode="email"
-          autoCapitalize="none"
-          autoCorrect="off"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="name@example.com"
-        />
+    </div>
+  );
+}
+
+// Your own name, which shows on the payments you record and to the people you
+// share with. Saved on your sign-in (it's the same one sign-up asks for).
+function YourNameForm({ current, onDone }) {
+  const [name, setName] = useState(current || "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function save() {
+    if (!name.trim()) return setError("Enter your name.");
+    setBusy(true);
+    setError("");
+    const { error: err } = await supabase.auth.updateUser({ data: { full_name: name.trim() } });
+    setBusy(false);
+    if (err) {
+      console.error("name not saved", err);
+      return setError("Couldn’t save your name — try again.");
+    }
+    onDone(true);
+  }
+  return (
+    <div style={{ padding: "4px 0" }}>
+      <div className="fl-field">
+        <label>Your name</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && save()} autoComplete="name" />
       </div>
-      <div className="fl-tag-picker" style={{ marginBottom: 10 }}>
-        {[
-          ["editor", "Can edit"],
-          ["viewer", "View only"],
-        ].map(([r, label]) => (
-          <button
-            key={r}
-            type="button"
-            className={"fl-tag-option" + (role === r ? " selected" : "")}
-            aria-pressed={role === r}
-            onClick={() => setRole(r)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      {error && <p className="ox-field-error">{error}</p>}
       <div className="fl-form-actions">
-        <button
-          className="fl-btn"
-          disabled={!valid}
-          onClick={async () => {
-            const to = email.trim().toLowerCase();
-            if (await onShare(to, role)) {
-              setEmail("");
-              setJustShared({ email: to, copied: false });
-            }
-          }}
-        >
-          <Share2 size={14} /> Share
+        <button className="fl-btn secondary" onClick={() => onDone(false)} disabled={busy}>
+          Cancel
+        </button>
+        <button className="fl-btn" onClick={save} disabled={busy}>
+          {busy ? "Saving…" : "Save"}
         </button>
       </div>
-      {justShared && (
-        <p className="fl-card-sub" style={{ marginTop: 10 }}>
-          {justShared.copied
-            ? "Invite copied — paste it into WhatsApp or a message."
-            : `Shared with ${justShared.email}. They’ll see it when they sign in with that email.`}{" "}
-          {!justShared.copied && (
-            <button className="fl-link" onClick={() => sendInvite(justShared.email)}>
-              Send them an invite
-            </button>
-          )}
-        </p>
-      )}
     </div>
   );
 }
@@ -2286,7 +2410,6 @@ function Ledger({ user, onAccountDeleted }) {
   const [showAddIncome, setShowAddIncome] = useState(false);
   const [editingIncomeId, setEditingIncomeId] = useState(null);
   const [pendingIncomeMonth, setPendingIncomeMonth] = useState(null);
-  const [newPerson, setNewPerson] = useState("");
   const [showBudgetEditor, setShowBudgetEditor] = useState(false);
   const [editingGoal, setEditingGoal] = useState(false);
   const [toast, setToast] = useState(null);
@@ -2318,6 +2441,7 @@ function Ledger({ user, onAccountDeleted }) {
   // Onyx frame: the Add menu, the header's edge once content scrolls under it,
   // and the tab bar's highlight, which slides to the current tab.
   const [addMenu, setAddMenu] = useState(null);
+  const [editingName, setEditingName] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [navPill, setNavPill] = useState(null);
   const contentRef = useRef(null);
@@ -2751,17 +2875,6 @@ function Ledger({ user, onAccountDeleted }) {
     }
   }
 
-  function addPerson() {
-    const name = newPerson.trim();
-    if (!name || people.includes(name)) return;
-    persist({ ...data, people: [...people, name] });
-    setNewPerson("");
-  }
-
-  function deletePerson(name) {
-    persist({ ...data, people: people.filter((p) => p !== name) });
-  }
-
   function saveMonthEntry(loanId, monthKey, amounts) {
     const existing = payments[loanId] || {};
     const nextEntries = { ...existing, [monthKey]: { amounts } };
@@ -2837,25 +2950,101 @@ function Ledger({ user, onAccountDeleted }) {
     return { owner, canEdit: owner || (mine && mine.role === "editor"), shares: m.shares, ownerEmail: m.ownerEmail, myRole: mine && mine.role };
   }
 
-  // Contributor names to show for a debt: yours, plus any used on it before
-  // (a shared debt can have payments recorded under other people's names).
-  function namesFor(loanId) {
-    const seen = new Set(people.length ? people : [myName]);
-    Object.values(payments[loanId] || {}).forEach((e) => Object.keys((e && e.amounts) || {}).forEach((n) => seen.add(n)));
-    return [...seen];
+  // ---- People: those you've invited, and who can see what ----
+  const contacts = data.contacts || [];
+  // Everyone you've invited, plus anyone something of yours is already shared
+  // with (so nobody with access is hidden from this list).
+  const knownPeople = (() => {
+    const list = contacts.map((c) => ({ email: c.email, name: c.name || nameFromEmail(c.email), saved: true }));
+    const seen = new Set(list.map((x) => x.email));
+    Object.values(metaRef.current.items).forEach((m) => {
+      if (m.ownerId !== user.id) return;
+      m.shares.forEach((sh) => {
+        if (seen.has(sh.email)) return;
+        seen.add(sh.email);
+        list.push({ email: sh.email, name: nameFromEmail(sh.email), saved: false });
+      });
+    });
+    return list;
+  })();
+  const personName = (email) => (knownPeople.find((x) => x.email === email) || { name: nameFromEmail(email) }).name;
+  const ownedSharedWith = (email) =>
+    Object.entries(metaRef.current.items)
+      .filter(([, m]) => m.ownerId === user.id && m.shares.some((sh) => sh.email === email))
+      .map(([id]) => id);
+
+  // Names on a debt's payment form: you, plus the people it's shared with (on
+  // your own debts), or everyone who has paid into it (on someone else's).
+  // Editing a month also keeps whoever paid in that month.
+  function namesFor(loanId, monthKey) {
+    const a = access(loanId);
+    const names = [myName];
+    if (a.owner) a.shares.forEach((sh) => names.push(personName(sh.email)));
+    else Object.values(payments[loanId] || {}).forEach((e) => Object.keys((e && e.amounts) || {}).forEach((n) => names.push(n)));
+    const entry = monthKey && (payments[loanId] || {})[monthKey];
+    if (entry && entry.amounts) Object.keys(entry.amounts).forEach((n) => names.push(n));
+    return [...new Set(names)];
   }
 
-  async function shareItem(itemId, email, role) {
-    try {
-      await store.addShare(itemId, email, role);
-      await reload();
-      showToast("Shared");
-      return true;
-    } catch (e) {
-      console.error("share failed", e);
-      showToast(e && e.code === "23505" ? "Already shared with that email" : "Couldn’t share — check the email and try again", null, 4000);
+  async function addPerson(name, email) {
+    if (email === myEmail) {
+      showToast("That’s your own email", null, 3000);
       return false;
     }
+    if (contacts.some((c) => c.email === email)) {
+      showToast(`${personName(email)} is already in your people`, null, 3000);
+      return false;
+    }
+    persist({ ...dataRef.current, contacts: [...(dataRef.current.contacts || []), { name, email }] }, { message: `${name} added` });
+    await saveQueue.current;
+    return true;
+  }
+
+  // Taking someone off your list also stops sharing everything with them.
+  async function removePerson(person) {
+    const ids = ownedSharedWith(person.email);
+    try {
+      for (const id of ids) await store.removeShare(id, person.email);
+    } catch (e) {
+      console.error("unshare failed", e);
+      showToast("Couldn’t remove them — try again", null, 4000);
+      await reload();
+      return;
+    }
+    await saveQueue.current;
+    await reload();
+    const now = dataRef.current;
+    const kept = (now.contacts || []).filter((c) => c.email !== person.email);
+    const msg = ids.length ? `${person.name} removed from ${ids.length} item${ids.length === 1 ? "" : "s"}` : `${person.name} removed`;
+    if (kept.length !== (now.contacts || []).length) persist({ ...now, contacts: kept }, { message: msg, undoable: false });
+    else showToast(msg);
+  }
+
+  // Gives someone access to one item, changes what they can do, or takes it away.
+  async function changeAccess(itemId, email, role, name) {
+    const current = ((metaRef.current.items[itemId] || {}).shares || []).find((sh) => sh.email === email);
+    try {
+      if (role === "none") {
+        if (current) await store.removeShare(itemId, email);
+      } else if (!current) {
+        await store.addShare(itemId, email, role);
+      } else if (current.role !== role) {
+        await store.setShareRole(itemId, email, role);
+      }
+      await reload();
+      showToast(role === "none" ? `Stopped sharing with ${name}` : role === "viewer" ? `${name} can view it` : `${name} can edit it`);
+      return true;
+    } catch (e) {
+      console.error("sharing failed", e);
+      showToast("Couldn’t change sharing — try again", null, 4000);
+      return false;
+    }
+  }
+
+  async function inviteToItem(itemId, name, email, role) {
+    const known = contacts.some((c) => c.email === email);
+    if (!known && !(await addPerson(name, email))) return false;
+    return changeAccess(itemId, email, role, name);
   }
 
   async function unshareItem(itemId, email, leaving) {
@@ -3037,7 +3226,7 @@ function Ledger({ user, onAccountDeleted }) {
     if (prevMonth && prevMonth.amounts) return { amounts: prevMonth.amounts, note: "Filled in from last month — change anything that’s different." };
     const summary = lenderSummaries.find((x) => x.id === loanId);
     const pay = summary && payableThisMonth(summary);
-    const names = namesFor(loanId);
+    const names = namesFor(loanId, monthKey);
     if (pay && names.length) return { amounts: { [names[0]]: Math.round(pay.amount) }, note: "Filled in with the amount due — split it between people if needed." };
     return { amounts: null, note: null };
   }
@@ -4056,7 +4245,9 @@ function Ledger({ user, onAccountDeleted }) {
                       kindLabel="income source"
                       a={acc}
                       myEmail={myEmail}
-                      onShare={(email, role) => shareItem(src.id, email, role)}
+                      people={knownPeople}
+                      onAccess={(email, role, name) => changeAccess(src.id, email, role, name)}
+                      onInvite={(name, email, role) => inviteToItem(src.id, name, email, role)}
                       onUnshare={(email, leaving) => unshareItem(src.id, email, leaving)}
                     />
 
@@ -4141,34 +4332,85 @@ function Ledger({ user, onAccountDeleted }) {
               </div>
             </div>
 
-            <p className="fl-section-title">Names for recording payments</p>
-            {people.map((p) => (
-              <div className="fl-list-row" key={p}>
-                <div className="fl-list-row-main">
-                  <div className="fl-list-row-name">{p}</div>
-                </div>
-                <ConfirmButton label={"remove " + p} onConfirm={() => deletePerson(p)} />
+            <p className="fl-section-title">People</p>
+            <p className="fl-card-sub" style={{ margin: "-4px 2px 12px" }}>
+              Invite the people you manage money with. Then, on any debt or income source, choose who can see it. Their
+              names show on the payment form for what’s shared with them.
+            </p>
+            {!fullName && !editingName && (
+              <div className="ox-banner info">
+                <Info size={18} />
+                <span>
+                  Add your name so payments you record show under it.{" "}
+                  <button className="fl-link" onClick={() => setEditingName(true)}>
+                    Add your name
+                  </button>
+                </span>
               </div>
-            ))}
-            {people.length === 0 && <div className="fl-empty">No names yet.</div>}
+            )}
+            <div className="ox-list">
+              <div className="ox-row ox-person" style={editingName ? { display: "block" } : undefined}>
+                {editingName ? (
+                  <YourNameForm
+                    current={fullName}
+                    onDone={(saved) => {
+                      setEditingName(false);
+                      if (saved) showToast("Name saved");
+                    }}
+                  />
+                ) : (
+                  <>
+                    <span className="ox-avatar sm" aria-hidden="true">
+                      {initials}
+                    </span>
+                    <span className="ox-row-main">
+                      <span className="ox-row-name">
+                        {fullName || myName} <span className="ox-faint">· you</span>
+                      </span>
+                      <span className="ox-row-sub">{myEmail}</span>
+                    </span>
+                    <button className="fl-icon-btn" onClick={() => setEditingName(true)} aria-label="Change your name">
+                      <Pencil size={16} />
+                    </button>
+                  </>
+                )}
+              </div>
+              {knownPeople.map((person) => {
+                const n = ownedSharedWith(person.email).length;
+                return (
+                  <div className="ox-row ox-person" key={person.email}>
+                    <span className={"ox-avatar sm" + (n ? "" : " muted")} aria-hidden="true">
+                      {initialsOf(person.name)}
+                    </span>
+                    <span className="ox-row-main">
+                      <span className="ox-row-name">{person.name}</span>
+                      <span className="ox-row-sub">
+                        {person.email} · {n ? `${n} shared` : "nothing shared yet"}
+                      </span>
+                    </span>
+                    <button
+                      className="fl-icon-btn"
+                      onClick={() =>
+                        sendInviteMessage(
+                          person.email,
+                          `I've invited you to Ledger. Open ${window.location.origin} and sign up with ${person.email} to see what I share with you.`
+                        ).then((how) => how === "copied" && showToast("Invite copied — paste it into a message", null, 3000))
+                      }
+                      aria-label={"Send " + person.name + " an invite"}
+                    >
+                      <Mail size={16} />
+                    </button>
+                    <ConfirmButton label={"remove " + person.name} onConfirm={() => removePerson(person)} />
+                  </div>
+                );
+              })}
+            </div>
             <div className="fl-panel" style={{ marginTop: 12 }}>
-              <div className="fl-field">
-                <label>Add a name</label>
-                <input
-                  value={newPerson}
-                  onChange={(e) => setNewPerson(e.target.value)}
-                  placeholder="e.g. Fathima"
-                  onKeyDown={(e) => e.key === "Enter" && addPerson()}
-                />
-              </div>
-              <div className="fl-form-actions">
-                <button className="fl-btn" onClick={addPerson}>
-                  Add
-                </button>
-              </div>
-              <p className="fl-card-sub" style={{ marginTop: 10 }}>
-                When you record a payment you can split it between these names. Removing a name keeps their past
-                payments.
+              <p className="fl-panel-title">Invite someone</p>
+              <InvitePersonForm onInvite={(name, email) => addPerson(name, email)} />
+              <p className="fl-card-sub" style={{ marginTop: 12 }}>
+                Removing someone also stops sharing everything with them. Payments they recorded stay in each debt’s
+                history.
               </p>
             </div>
 
@@ -4526,7 +4768,6 @@ function Ledger({ user, onAccountDeleted }) {
                 const isOverdue = summary.isOverdue;
                 const suggestedMonth = getSuggestedMonth(selectedLoan, entries, asOfKey);
                 const acc = access(selectedLoan.id);
-                const names = namesFor(selectedLoan.id);
                 const plan = selectedLoan.repaymentPlan;
                 const planCharge = plan ? (selectedLoan.totalAmount || 0) - plan.received : 0;
                 const planRate = plan ? planYearlyRate(plan.received, plan.amounts) : null;
@@ -4703,9 +4944,9 @@ function Ledger({ user, onAccountDeleted }) {
                                 </div>
                                 <div className="fl-month-breakdown" onClick={() => recordMonth(row.key)}>
                                   {row.recorded
-                                    ? names
-                                        .filter((p) => people.includes(p) || (Number(row.amounts[p]) || 0) !== 0)
-                                        .map((p) => `${p} ${fmt(row.amounts[p] || 0)}`)
+                                    ? Object.entries(row.amounts)
+                                        .filter(([, v]) => (Number(v) || 0) !== 0)
+                                        .map(([p, v]) => `${p} ${fmt(v)}`)
                                         .join(" · ") +
                                       (selectedLoan.type !== "fixed" ? ` — interest ${fmt(row.interest)}` : "")
                                     : selectedLoan.type !== "fixed"
@@ -4742,7 +4983,9 @@ function Ledger({ user, onAccountDeleted }) {
                       kindLabel="debt"
                       a={acc}
                       myEmail={myEmail}
-                      onShare={(email, role) => shareItem(selectedLoan.id, email, role)}
+                      people={knownPeople}
+                      onAccess={(email, role, name) => changeAccess(selectedLoan.id, email, role, name)}
+                      onInvite={(name, email, role) => inviteToItem(selectedLoan.id, name, email, role)}
                       onUnshare={(email, leaving) => unshareItem(selectedLoan.id, email, leaving)}
                     />
 
@@ -4813,7 +5056,7 @@ function Ledger({ user, onAccountDeleted }) {
                   onMonthKeyChange={(m) => setRecordTarget({ ...t, month: m })}
                   defaults={d.amounts}
                   isExisting={!!(payments[t.id] || {})[t.month]}
-                  people={namesFor(t.id)}
+                  people={namesFor(t.id, t.month)}
                   title={((payments[t.id] || {})[t.month] ? "Edit " : "Record ") + monthKeyLabel(t.month)}
                   onCancel={() => setRecordTarget(null)}
                   onSave={(amounts) => saveMonthEntry(t.id, t.month, amounts)}
@@ -4851,7 +5094,7 @@ function Ledger({ user, onAccountDeleted }) {
           <BudgetEditor
             initialParts={budgetParts}
             incomes={incomeSummaries}
-            people={people}
+            people={[myName, ...knownPeople.map((x) => x.name)]}
             asOfKey={asOfKey}
             onCancel={() => setShowBudgetEditor(false)}
             onSave={saveBudgetParts}

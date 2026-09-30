@@ -878,6 +878,35 @@ export const styles = `
   }
   .ox-row-icon.accent { background: var(--accent-soft); color: var(--accent); }
 
+  /* People: invited people, and who can see an item */
+  .ox-person { cursor: default; }
+  .ox-person:hover { background: none; }
+  .ox-avatar.sm { width: 34px; height: 34px; font-size: 12px; cursor: default; }
+  .ox-avatar.muted { background: var(--surface-3); color: var(--text-2); box-shadow: 0 0 0 1px var(--line-strong) inset; }
+  .ox-access {
+    flex-shrink: 0;
+    min-height: 34px;
+    padding: 6px 30px 6px 12px;
+    border-radius: var(--r-pill);
+    border: 1px solid var(--line-control);
+    background-color: var(--surface-2);
+    background-image: linear-gradient(45deg, transparent 50%, var(--text-3) 50%), linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
+    background-position: calc(100% - 16px) 52%, calc(100% - 11px) 52%;
+    background-size: 5px 5px;
+    background-repeat: no-repeat;
+    color: var(--text-2);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+    transition: border-color var(--dur), color var(--dur), background-color var(--dur);
+  }
+  .ox-access.on { border-color: rgba(227,187,111,0.55); background-color: var(--accent-soft); color: var(--accent); }
+  .ox-access:disabled { opacity: 0.5; }
+  .ox-access:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
   /* This month: date badges */
   .fl-month-list { padding: 0; overflow: hidden; }
   .fl-month-item {

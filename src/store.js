@@ -115,6 +115,8 @@ export function assemble({ items, shares, entries, settings, currencies = [] }) 
     incomeRecords,
   };
   if (sd.currency) raw.currency = sd.currency;
+  // The people you've invited ({ name, email }), for sharing and payments.
+  if (Array.isArray(sd.contacts)) raw.contacts = sd.contacts;
   // Fills in defaults for any missing fields in memory only; nothing is written.
   const { data } = migrateData(raw);
   return { data, meta, hasSettings: !!settings };
@@ -225,8 +227,8 @@ export async function saveChanges(prev, next, meta, userId, deletedIds) {
     }
   }
 
-  const settingsBefore = { people: prev.people, strategy: prev.strategy, currency: prev.currency };
-  const settingsAfter = { people: next.people, strategy: next.strategy, currency: next.currency };
+  const settingsBefore = { people: prev.people, strategy: prev.strategy, currency: prev.currency, contacts: prev.contacts };
+  const settingsAfter = { people: next.people, strategy: next.strategy, currency: next.currency, contacts: next.contacts };
   if (!same(settingsBefore, settingsAfter)) await saveSettings(settingsAfter, meta, userId);
 }
 
@@ -255,6 +257,9 @@ export async function addShare(itemId, email, role) {
 }
 export async function removeShare(itemId, email) {
   check(await supabase.from("item_shares").delete().eq("item_id", itemId).eq("email", email));
+}
+export async function setShareRole(itemId, email, role) {
+  check(await supabase.from("item_shares").update({ role }).eq("item_id", itemId).eq("email", email));
 }
 
 // ---- Deleting an account ----
