@@ -1255,29 +1255,22 @@ async function sendInviteMessage(to, text) {
 
 const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// Name + email for inviting someone new (Account → People, or from a debt).
+// Inviting someone new by their email (Account → People, or from a debt).
+// No name is asked for: once they sign up, they show under the one they give.
 function InvitePersonForm({ onInvite, onCancel, withRole = false, submitLabel = "Invite" }) {
-  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("editor");
   const [busy, setBusy] = useState(false);
-  const valid = name.trim() && EMAIL_OK.test(email.trim());
+  const valid = EMAIL_OK.test(email.trim());
   async function submit() {
     if (!valid || busy) return;
     setBusy(true);
-    const ok = await onInvite(name.trim(), email.trim().toLowerCase(), role);
+    const ok = await onInvite(email.trim().toLowerCase(), role);
     setBusy(false);
-    if (ok) {
-      setName("");
-      setEmail("");
-    }
+    if (ok) setEmail("");
   }
   return (
     <div>
-      <div className="fl-field">
-        <label>Their name</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" placeholder="e.g. Riyas" />
-      </div>
       <div className="fl-field">
         <label>Their email</label>
         <input
@@ -1371,7 +1364,7 @@ function SharePanel({ itemName, a, myEmail, people, onAccess, onInvite, onUnshar
                 </span>
                 <span className="ox-row-main">
                   <span className="ox-row-name">{p.name}</span>
-                  <span className="ox-row-sub">{p.email}</span>
+                  <span className="ox-row-sub">{p.name !== p.email ? p.email : p.joined ? "joined" : "not joined yet"}</span>
                 </span>
                 {role !== "none" && (
                   <button className="fl-icon-btn" onClick={() => invite(p.email)} aria-label={"Send " + p.name + " an invite"}>
@@ -1404,8 +1397,8 @@ function SharePanel({ itemName, a, myEmail, people, onAccess, onInvite, onUnshar
             withRole
             submitLabel="Invite and share"
             onCancel={() => setInviting(false)}
-            onInvite={async (name, email, role) => {
-              const ok = await onInvite(name, email, role);
+            onInvite={async (email, role) => {
+              const ok = await onInvite(email, role);
               if (ok) setInviting(false);
               return ok;
             }}
@@ -2969,10 +2962,11 @@ function Ledger({ user, onAccountDeleted }) {
   const knownPeople = (() => {
     const person = (email, given, saved) => {
       const own = accounts[email];
-      const name = own || given || nameFromEmail(email);
-      return { email, name, given, joined: email in accounts, saved, payName: own ? own.split(/\s+/)[0] : name };
+      const name = own || given || email;
+      const payName = own ? own.split(/\s+/)[0] : given || nameFromEmail(email);
+      return { email, name, given, joined: email in accounts, saved, payName };
     };
-    const list = contacts.map((c) => person(c.email, c.name, true));
+    const list = contacts.map((c) => person(c.email, c.name || null, true));
     const seen = new Set(list.map((x) => x.email));
     Object.values(metaRef.current.items).forEach((m) => {
       if (m.ownerId !== user.id) return;
@@ -3012,16 +3006,16 @@ function Ledger({ user, onAccountDeleted }) {
     return [...new Set(names)];
   }
 
-  async function addPerson(name, email) {
+  async function addPerson(email) {
     if (email === myEmail) {
       showToast("That’s your own email", null, 3000);
       return false;
     }
     if (contacts.some((c) => c.email === email)) {
-      showToast(`${personName(email)} is already in your people`, null, 3000);
+      showToast(`${email} is already in your people`, null, 3000);
       return false;
     }
-    persist({ ...dataRef.current, contacts: [...(dataRef.current.contacts || []), { name, email }] }, { message: `${name} added` });
+    persist({ ...dataRef.current, contacts: [...(dataRef.current.contacts || []), { email }] }, { message: `Invited ${email}` });
     await saveQueue.current;
     return true;
   }
@@ -3067,10 +3061,10 @@ function Ledger({ user, onAccountDeleted }) {
     }
   }
 
-  async function inviteToItem(itemId, name, email, role) {
+  async function inviteToItem(itemId, email, role) {
     const known = contacts.some((c) => c.email === email);
-    if (!known && !(await addPerson(name, email))) return false;
-    return changeAccess(itemId, email, role, name);
+    if (!known && !(await addPerson(email))) return false;
+    return changeAccess(itemId, email, role, known ? personName(email) : email);
   }
 
   async function unshareItem(itemId, email, leaving) {
@@ -4273,7 +4267,7 @@ function Ledger({ user, onAccountDeleted }) {
                       myEmail={myEmail}
                       people={knownPeople}
                       onAccess={(email, role, name) => changeAccess(src.id, email, role, name)}
-                      onInvite={(name, email, role) => inviteToItem(src.id, name, email, role)}
+                      onInvite={(email, role) => inviteToItem(src.id, email, role)}
                       onUnshare={(email, leaving) => unshareItem(src.id, email, leaving)}
                     />
 
@@ -4435,7 +4429,8 @@ function Ledger({ user, onAccountDeleted }) {
                     <span className="ox-row-main">
                       <span className="ox-row-name">{person.name}</span>
                       <span className="ox-row-sub">
-                        {person.email} · {n ? `${n} shared` : "nothing shared yet"}
+                        {person.name !== person.email ? `${person.email} · ` : ""}
+                        {n ? `${n} shared` : "nothing shared yet"}
                         {n ? (person.joined ? " · joined" : " · not joined yet") : ""}
                       </span>
                     </span>
@@ -4458,7 +4453,10 @@ function Ledger({ user, onAccountDeleted }) {
             </div>
             <div className="fl-panel" style={{ marginTop: 12 }}>
               <p className="fl-panel-title">Invite someone</p>
-              <InvitePersonForm onInvite={(name, email) => addPerson(name, email)} />
+              <InvitePersonForm onInvite={(email) => addPerson(email)} />
+              <p className="fl-card-sub" style={{ marginTop: 12 }}>
+                They show under their email until they sign up, then under the name they give.
+              </p>
               <p className="fl-card-sub" style={{ marginTop: 12 }}>
                 Removing someone also stops sharing everything with them. Payments they recorded stay in each debt’s
                 history.
@@ -5037,7 +5035,7 @@ function Ledger({ user, onAccountDeleted }) {
                       myEmail={myEmail}
                       people={knownPeople}
                       onAccess={(email, role, name) => changeAccess(selectedLoan.id, email, role, name)}
-                      onInvite={(name, email, role) => inviteToItem(selectedLoan.id, name, email, role)}
+                      onInvite={(email, role) => inviteToItem(selectedLoan.id, email, role)}
                       onUnshare={(email, leaving) => unshareItem(selectedLoan.id, email, leaving)}
                     />
 
