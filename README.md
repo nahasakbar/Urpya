@@ -97,10 +97,20 @@ warning from Google.
      ```
    Accounts made before passwords existed sign in the first time with
    **Forgot password?**, which sets their password.
-2. **Keep "Confirm email" on** (Authentication → Sign In / Providers →
+
+   Supabase sometimes can't load a saved template and sends its own
+   original email, with a link instead of a code. The link works too: it
+   opens Ledger signed in (or, from a password reset, on "Set a new
+   password"). For that, step 2 below must be done.
+2. **Set the app's address** (Supabase → Authentication → URL
+   Configuration): **Site URL** = the app's address (e.g.
+   `https://yourapp.vercel.app`), and add the same address under **Redirect
+   URLs**. Otherwise email links (and Google) go to `localhost` and look
+   broken.
+3. **Keep "Confirm email" on** (Authentication → Sign In / Providers →
    Email). Sharing is by email address, so an address must be proven before
    it can see what's shared with it.
-3. **Google (optional).** The button appears by itself once Google is
+4. **Google (optional).** The button appears by itself once Google is
    switched on in Supabase:
    - In [Google Cloud Console](https://console.cloud.google.com), create a
      project, then **APIs & Services → OAuth consent screen**: External, app
@@ -113,9 +123,6 @@ warning from Google.
      ID** and **Client secret**.
    - In Supabase → **Authentication → Sign In / Providers → Google**: switch
      it on, paste the Client ID and secret, save.
-   - In Supabase → **Authentication → URL Configuration**: set **Site URL**
-     to the app's address (e.g. `https://yourapp.vercel.app`) and add the same
-     address under **Redirect URLs**.
 
 ## Opening it to everyone
 

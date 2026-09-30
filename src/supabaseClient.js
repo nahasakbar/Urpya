@@ -42,6 +42,17 @@ const authStorage = {
     }),
 };
 
+// What kind of email link opened the page, if any: "recovery" (reset
+// password), "signup" (confirm email), … Read before the client below tidies
+// the address, since its own "recovery" signal can fire before the app listens.
+export const openedFromEmailLink = (() => {
+  try {
+    return new URLSearchParams(window.location.hash.slice(1)).get("type");
+  } catch {
+    return null;
+  }
+})();
+
 export const supabase = createClient(supabaseUrl || "", supabaseAnonKey || "", {
   auth: { storage: authStorage },
 });

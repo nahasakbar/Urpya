@@ -23,7 +23,7 @@ import {
   Eye,
   EyeOff,
 } from "lucide-react";
-import { supabase, getRememberMe, setRememberMe, loadAuthSettings } from "./supabaseClient.js";
+import { supabase, getRememberMe, setRememberMe, loadAuthSettings, openedFromEmailLink } from "./supabaseClient.js";
 import * as store from "./store.js";
 import { buildCalendar } from "./calendar.js";
 import { describeChange } from "./activity.js";
@@ -1583,12 +1583,14 @@ function TermsNote() {
 }
 
 // Signing in and creating an account: email + password, or Google once it's
-// switched on in Supabase. A new account confirms its email with a 6-digit
-// code, and a forgotten password is reset with one — codes rather than links,
-// so it works the same in a browser, on a Home Screen icon or in a future app.
-// `onHold(true)` keeps this screen up while a password reset finishes, since
-// the reset code signs you in before the new password is saved.
-function SignIn({ notice, onHold }) {
+// switched on in Supabase. A new account confirms its email, and a forgotten
+// password is reset, with the 6-digit code from the email — or with the link
+// in it, for when Supabase sends its own template instead of ours (it falls
+// back to that when it can't load ours). `onHold(true)` keeps this screen up
+// while a password reset finishes, since the code or link signs you in before
+// the new password is saved. `recoveryEmail` is set when a reset link opened
+// the app: then only the new password is asked for.
+function SignIn({ notice, onHold, recoveryEmail }) {
   const [stage, setStage] = useState("signin"); // signin | signup | confirm | forgot | reset
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -1608,14 +1610,31 @@ function SignIn({ notice, onHold }) {
 
   useEffect(() => {
     loadAuthSettings().then((s) => setGoogleOn(!!(s && s.external && s.external.google)));
-    // Back from Google with an error (e.g. sign-in cancelled).
+    // Back from Google or an email link with an error (sign-in cancelled, or
+    // a link that has expired or was already used).
     const params = new URLSearchParams(window.location.hash.slice(1) + "&" + window.location.search.slice(1));
     const why = params.get("error_description");
     if (why) {
-      setError("Google sign-in didn’t finish: " + why.replace(/\+/g, " "));
+      setError(
+        params.get("error_code") === "otp_expired"
+          ? "That email link has expired or was already used. Sign in, or ask for a new code."
+          : "Sign-in didn’t finish: " + why.replace(/\+/g, " ")
+      );
       window.history.replaceState(null, "", window.location.pathname);
     }
   }, []);
+
+  // A password-reset link opened the app: it has already signed in, so only
+  // the new password is needed.
+  useEffect(() => {
+    if (!recoveryEmail) return;
+    setEmail(recoveryEmail);
+    setStage("reset");
+    setResetVerified(true);
+    setPassword("");
+    setError("");
+    setInfo("");
+  }, [recoveryEmail]);
 
   function go(next) {
     setStage(next);
@@ -1687,7 +1706,7 @@ function SignIn({ notice, onHold }) {
       supabase.auth.signUp({
         email: cleanEmail,
         password,
-        options: { data: { full_name: name.trim() }, captchaToken },
+        options: { data: { full_name: name.trim() }, captchaToken, emailRedirectTo: window.location.origin },
       })
     );
     if (!res) return;
@@ -1723,7 +1742,11 @@ function SignIn({ notice, onHold }) {
 
   async function resendConfirmation() {
     const res = await withBot((captchaToken) =>
-      supabase.auth.resend({ type: "signup", email: cleanEmail, options: { captchaToken } })
+      supabase.auth.resend({
+        type: "signup",
+        email: cleanEmail,
+        options: { captchaToken, emailRedirectTo: window.location.origin },
+      })
     );
     if (!res) return;
     if (res.error) {
@@ -1735,7 +1758,9 @@ function SignIn({ notice, onHold }) {
 
   async function sendResetCode() {
     if (!EMAIL_RE.test(cleanEmail)) return setError("Enter your email address.");
-    const res = await withBot((captchaToken) => supabase.auth.resetPasswordForEmail(cleanEmail, { captchaToken }));
+    const res = await withBot((captchaToken) =>
+      supabase.auth.resetPasswordForEmail(cleanEmail, { captchaToken, redirectTo: window.location.origin })
+    );
     if (!res) return;
     if (res.error) {
       console.error("reset code failed", res.error);
@@ -1809,7 +1834,7 @@ function SignIn({ notice, onHold }) {
     },
     confirm: {
       title: "Confirm your email",
-      sub: `Enter the 6-digit code we sent to ${cleanEmail}. It can take a minute — check spam too.`,
+      sub: `Enter the 6-digit code we sent to ${cleanEmail}, or tap the link in that email. It can take a minute — check spam too.`,
       action: "Confirm",
       run: confirmEmail,
     },
@@ -1821,7 +1846,9 @@ function SignIn({ notice, onHold }) {
     },
     reset: {
       title: "Set a new password",
-      sub: `If there’s an account for ${cleanEmail}, we’ve sent it a 6-digit code. Enter it and choose a new password.`,
+      sub: resetVerified
+        ? `Choose a new password for ${cleanEmail}.`
+        : `If there’s an account for ${cleanEmail}, we’ve sent it an email. Enter its 6-digit code and a new password here, or tap the link in it.`,
       action: "Save new password",
       run: saveNewPassword,
     },
@@ -1839,7 +1866,9 @@ function SignIn({ notice, onHold }) {
           <div className="fl-rivet"></div>
         </div>
         <div className="fl-z1">
-          {stage === "signin" ? (
+          {stage === "signin" || (stage === "reset" && resetVerified) ? (
+            // Once a reset code or link has signed in, the way on is saving
+            // the password or "Skip", not back to the sign-in form.
             <>
               <h1 className="fl-title fl-serif">Ledger</h1>
               <p className="fl-subtitle">Your debts and income, shared only with who you choose</p>
@@ -2098,10 +2127,26 @@ function ChangePasswordPanel() {
 export default function App() {
   const [session, setSession] = useState(undefined);
   const [notice, setNotice] = useState("");
-  const [hold, setHold] = useState(false);
+  // Opened from a password-reset link: stay on the sign-in screen to ask for
+  // the new password before opening the app.
+  const [recovering, setRecovering] = useState(openedFromEmailLink === "recovery");
+  const [hold, setHold] = useState(openedFromEmailLink === "recovery");
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    supabase.auth.getSession().then(({ data }) => {
+      // A reset link that didn't sign in (e.g. expired): nothing to wait for.
+      if (!data.session) {
+        setRecovering(false);
+        setHold(false);
+      }
+      setSession(data.session);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setRecovering(true);
+        setHold(true);
+      }
+      setSession(s);
+    });
     return () => sub.subscription.unsubscribe();
   }, []);
   if (session === undefined) {
@@ -2112,7 +2157,18 @@ export default function App() {
       </div>
     );
   }
-  if (!session || hold) return <SignIn notice={notice} onHold={setHold} />;
+  if (!session || hold) {
+    return (
+      <SignIn
+        notice={notice}
+        onHold={(on) => {
+          setHold(on);
+          if (!on) setRecovering(false);
+        }}
+        recoveryEmail={recovering && session ? session.user.email : null}
+      />
+    );
+  }
   return (
     <Ledger
       key={session.user.id}
