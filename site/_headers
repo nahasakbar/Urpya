@@ -1,11 +1,17 @@
-# Cloudflare Pages response headers for every page.
+# Response headers Cloudflare adds to every page.
 /*
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
   Strict-Transport-Security: max-age=31536000
-  Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; script-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'none'
+  Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; script-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'none'
 
-/assets/*
+# Images and fonts rarely change, so browsers may keep them for a day. The
+# stylesheet and script keep Cloudflare's default (always re-check), so a new
+# look shows up straight after an upload.
+/assets/img/*
+  Cache-Control: public, max-age=86400
+
+/assets/fonts/*
   Cache-Control: public, max-age=86400
