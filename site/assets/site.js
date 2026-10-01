@@ -1,3 +1,7 @@
+// Lets the stylesheet know scripts run, so things that animate in can start
+// hidden (without scripts they simply show).
+document.documentElement.classList.add("js");
+
 // "Copy email" buttons: copy the address, say so for a moment, and announce it
 // to screen readers. If copying isn't allowed, open the email app instead.
 document.querySelectorAll("[data-copy]").forEach((button) => {
@@ -41,4 +45,24 @@ if (autoVideos.length && !reduceMotion && "IntersectionObserver" in window) {
     video.muted = true;
     onScreen.observe(video);
   });
+}
+
+// Things that animate in when scrolled to ([data-reveal], e.g. the icon orbit).
+const toReveal = document.querySelectorAll("[data-reveal]");
+if (toReveal.length) {
+  if ("IntersectionObserver" in window) {
+    const reveal = new IntersectionObserver(
+      (entries) => {
+        entries.forEach(({ target, isIntersecting }) => {
+          if (!isIntersecting) return;
+          target.classList.add("in-view");
+          reveal.unobserve(target);
+        });
+      },
+      { threshold: 0.25 }
+    );
+    toReveal.forEach((el) => reveal.observe(el));
+  } else {
+    toReveal.forEach((el) => el.classList.add("in-view"));
+  }
 }

@@ -133,6 +133,9 @@ img, video { max-width: 100%; }
 }
 .brand:hover { color: var(--cream); }
 .brand span { display: block; }
+/* The owner's dot-matrix PD mark, used as the logo in the menu bar. */
+.brand-mark { display: block; line-height: 0; }
+.brand-mark img { display: block; width: auto; height: 32px; }
 .nav { display: flex; align-items: center; gap: 24px; margin-left: auto; }
 .nav a {
   color: var(--text-2); text-decoration: none; font-size: 14px; font-weight: 500; letter-spacing: 0.01em;
@@ -290,6 +293,8 @@ a.svc-go:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
 
 /* ---------------------------------------------------------------- home: work */
 .work { padding: 96px 0 24px; }
+/* Turning and tilted artwork may poke a little past its box; never let it widen the page. */
+.work, .case { overflow-x: hidden; overflow-x: clip; }
 @media (min-width: 720px) { .work { padding: 120px 0 40px; } }
 .work-intro { max-width: 600px; margin-bottom: 8px; }
 .work-intro p { margin-top: 16px; color: var(--text-2); font-size: 18px; line-height: 1.5; }
@@ -349,6 +354,71 @@ a.svc-go:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
 .placeholder.square { aspect-ratio: 1; max-width: 440px; border-radius: 50%; }
 .placeholder b { display: block; font-family: var(--serif); font-weight: 400; font-size: 26px; color: #fff; }
 .placeholder small { display: block; margin-top: 8px; font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); }
+
+/* ---------------------------------------------------------------- Icons & Glyphs orbit */
+/* The owner's Figma composition: a rainbow drop in a white disc, with icons on
+   two rings. The whole arrangement turns slowly while each icon counter-turns
+   to stay upright and floats on its own rhythm; the dotted ring drifts the
+   other way; the drop breathes; icons pop in when the orbit scrolls into view
+   (site.js adds .in-view). Hovering pauses the turning. Sizes use container
+   units, so it scales with its width. */
+.orbit { position: relative; width: 100%; max-width: 440px; aspect-ratio: 1; margin: 0 auto; container-type: inline-size; }
+.orbit-lines { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; }
+/* Both rings dashed, as in the Figma design. */
+.orbit-lines circle { fill: none; stroke: rgba(255, 255, 255, 0.13); stroke-width: 0.35; stroke-dasharray: 3 2; transform-box: fill-box; transform-origin: center; }
+.orbit::before {
+  content: ""; position: absolute; inset: 18%; border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle, rgba(167, 139, 250, 0.16), rgba(74, 163, 255, 0.06) 45%, transparent 70%);
+}
+/* Each ring is a point at the centre, so turning it never pokes out of the page. */
+.orbit-ring { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
+/* Both rings turn together, so the Figma composition never changes shape. */
+.orbit-ring { --turn: 150s; }
+.orbit-item {
+  position: absolute; left: 0; top: 0; width: 0; height: 0;
+  transform: rotate(var(--a)) translateX(calc(var(--r) * 1cqw)) rotate(calc(-1 * var(--a)));
+}
+/* Each item sets its own place and size (--a angle, --r radius, --w/--h size,
+   all in container units) from the owner's Figma layout. */
+.orbit-icon {
+  position: absolute; display: grid; place-items: center;
+  left: calc(var(--w, 14) * -0.5cqw); top: calc(var(--h, 14) * -0.5cqw);
+  width: calc(var(--w, 14) * 1cqw); height: calc(var(--h, 14) * 1cqw);
+}
+.glyph { display: block; width: 100%; height: 100%; transition: transform 300ms var(--ease-out); }
+img.glyph { object-fit: contain; }
+.glyph > svg { display: block; width: 100%; height: 100%; }
+.orbit-icon:hover .glyph { transform: scale(1.12); }
+/* The centre: the owner's drop-on-a-disc SVG (it carries its own soft shadow),
+   placed so the disc's middle sits on the rings' centre. */
+.orbit-core {
+  position: absolute; width: calc(var(--core) * 1cqw);
+  left: calc(50% + var(--core-x) * 1cqw); top: calc(50% + var(--core-y) * 1cqw);
+  transform-origin: calc(var(--core-ox) * 1cqw) calc(var(--core-oy) * 1cqw);
+}
+.orbit-core img { display: block; width: 100%; height: auto; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .orbit-ring { animation: orbit-turn var(--turn) linear infinite; }
+  .orbit-ring .orbit-icon { animation: orbit-turn var(--turn) linear infinite reverse; }
+  .orbit-dash { animation: orbit-turn 90s linear infinite reverse; }
+  .orbit-dash-in { animation: orbit-turn 120s linear infinite; }
+  .glyph { animation: orbit-float 4.2s ease-in-out calc(var(--i, 0) * -0.7s) infinite alternate; }
+  .orbit-core { animation: orbit-breathe 5s ease-in-out infinite alternate; }
+  .orbit::before { animation: orbit-glow 5s ease-in-out infinite alternate; }
+  .orbit:hover .orbit-ring, .orbit:hover .orbit-icon, .orbit:hover .orbit-lines circle { animation-play-state: paused; }
+  .js .orbit[data-reveal]:not(.in-view) .glyph, .js .orbit[data-reveal]:not(.in-view) .orbit-core img { opacity: 0; transform: scale(0.5); }
+  .orbit.in-view .glyph {
+    animation: orbit-pop 700ms var(--ease-out) calc(250ms + var(--i, 0) * 90ms) backwards,
+      orbit-float 4.2s ease-in-out calc(var(--i, 0) * -0.7s) infinite alternate;
+  }
+  .orbit.in-view .orbit-core img { animation: orbit-pop 800ms var(--ease-out) backwards; }
+  @keyframes orbit-turn { to { transform: rotate(360deg); } }
+  @keyframes orbit-breathe { from { transform: scale(1); } to { transform: scale(1.04); } }
+  @keyframes orbit-glow { from { opacity: 0.65; transform: scale(0.94); } to { opacity: 1; transform: scale(1.06); } }
+  @keyframes orbit-pop { from { opacity: 0; transform: scale(0.5); } to { opacity: 1; transform: scale(1); } }
+  @keyframes orbit-float { from { translate: 0 4%; } to { translate: 0 -4%; } }
+}
 
 /* ---------------------------------------------------------------- home: contact */
 .pd-contact { padding: 96px 0; border-top: 1px solid var(--line); }

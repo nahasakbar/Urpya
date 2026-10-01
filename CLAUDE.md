@@ -122,6 +122,7 @@ Since 2026-10-01 the same web code is wrapped as a native iPhone app with Capaci
   - From their **Figma design** (file "PD-Website", frame "iMac - 21"): the cream (#ffffe3) dot-matrix wordmark in **Array Wide**, self-hosted from Fontshare (`site/assets/fonts/array-wide.woff2`, ITF Free Font License). Also the Baskervville Italic tagline, DM Serif Text headings, each project's own tag colour (`--c`), and the business cards with their coloured buttons.
   - From their **style guide** (`~/Downloads/DESIGN.md`, a dark "command centre" look modelled on Raycast's site): the #040506 canvas, Inter text with grey secondary text (#9c9c9d), and a floating glass menu bar with a grey "Get in touch" button. Also neutral grey buttons (Mist #e6e6e6 with Iron #454647 text), cards defined by hairlines and the inset "key" shadow (`--key`, `--edge`) rather than drop shadows, 8px-grid spacing with 80–120px between sections, and Geist Mono for small technical text, including the footer's legal details as a pipe-separated strip.
   - Only the style was borrowed: never Raycast's logo, coral diamond, wording or red/blue hero artwork. The coral accent isn't used.
+  - **Logo:** the owner's dot-matrix PD mark (`site/assets/pd-mark.svg`, cream #FFFFE3) is the menu-bar logo (`.brand-mark`). The footer keeps the "Paradox Dynamics" wordmark. `favicon.svg` and `apple-touch-icon.png` (180 px, no transparency) show the mark on a #040506 tile, so it stays visible on light browser tabs.
   - Kaayi's page (`<body class="kaayi">`) and its phone mock-up keep the app's gold and Onyx surfaces, plus Geist. The Kaayi app itself is unchanged (the owner chose website only).
   - Stylesheet and script links carry `?v=N`. Bump N when changing them, because older visitors may still hold the old copy (`_headers` now only lets browsers keep images and fonts for a day).
 - **Home** (`/`):
@@ -132,7 +133,7 @@ Since 2026-10-01 the same web code is wrapped as a native iPhone app with Capaci
     - **Studio Chinnoski** (the design studio): our own product, a tilted Kaayi phone.
   - The illustrations move only on hover or once on load, and not at all with reduced motion. On phones the cards scroll sideways and snap.
   - Each arrow is an `aria-disabled` span reading "Website coming soon" until that business has its own domain. Then make it an `<a class="svc-go" href=…>` and drop the "coming soon" line.
-  - **Products & projects:** Kaayi first, with the owner's request to list it as a product rather than a business, then the Podcast App, Voizzit, Dealsbreaker, Edfundo, Icons & Glyphs, Hotel Booking App (a stand-in name chosen by Claude) and Roads.
+  - **Products & projects:** Kaayi first, with the owner's request to list it as a product rather than a business, then the Podcast App, Voizzit, Dealsbreaker, Edfundo, Icons & Glyphs and Roads. A Hotel Booking App project was removed at the owner's request.
   - The contact section, with hello@ and support@.
 - **Project pages:** `/work/<slug>/`, one per project. The Kaayi product page is `/kaayi/`.
 - **Images and videos:**
@@ -142,7 +143,13 @@ Since 2026-10-01 the same web code is wrapped as a native iPhone app with Capaci
   - `site.js` plays a video only while it's on screen and pauses it otherwise. On the home page it removes the controls. With reduced motion, or no JavaScript, nothing autoplays and the normal controls show.
   - Pages with videos must load `site.js`.
   - **Range requests:** iPhones and iPads only play a `<video>` if the server answers range requests with 206 Partial Content, and Workers static assets always send the whole file (checked live on 2026-10-01). So `wrangler.jsonc` has `main: worker/index.js` with `run_worker_first: ["/assets/video/*"]`. Only video requests reach the Worker. It fetches the asset through the `ASSETS` binding, reads it (the asset response has no length) and returns just the requested bytes with `Content-Range`, a 416 for impossible ranges, and `Accept-Ranges: bytes` always. Everything else is served directly as static assets. Test it with `npx wrangler dev` and `curl -r 0-1 …/assets/video/roads.mp4` (expect 206).
-  - The Podcast App and Icons & Glyphs still show a `.placeholder` box until the owner sends files. To swap one in, replace the placeholder `<div>` inside its `<figure class="media …">` on both the home page and that project's page.
+  - **Icons & Glyphs** is the animated `.orbit`, on the home page and its project page.
+    - It recreates the Figma composition. The owner's own exported SVGs are in `site/assets/icons/`: `drop-disc.svg` (the centre), `cyclist`, `runner`, `footprints`, `train` and `walker`.
+    - Each icon sits at the angle, radius and size measured from the Figma frame. The values are inline as `--a`, `--r`, `--w` and `--h`, in container units where the outer ring is 92% of the width.
+    - The Figma design also had the Procreate and Figma app icons and a 3D fridge. The owner chose to leave those out (2026-10-01), so the orbit shows only their five icons and the centre disc. Don't add made-up icons back.
+    - Motion: the whole arrangement turns together (150 s per turn, icons counter-turning to stay upright, so nothing ever collides), each icon floats on its own rhythm, the dashed rings drift, the centre breathes, and icons pop in when scrolled to. Hovering pauses the turning, and reduced motion stops everything.
+    - Turning artwork can poke past its box, so `.work` and `.case` clip sideways overflow.
+  - The Podcast App still shows a `.placeholder` box until the owner sends files. To swap one in, replace the placeholder `<div>` inside its `<figure class="media …">` on both the home page and that project's page.
   - Figma's free plan allows only 20 reads a month (see memory), so ask the owner to export files rather than reading Figma again.
 - **Other pages:** `/privacy/`, `/terms/`, `/support/` (FAQ, plus `#delete-account` for the App Store and Google Play), and `404.html` (served for missing pages through `not_found_handling`). They all share the same header (small wordmark + Work, Kaayi, Contact) and footer.
 - **Security headers:** `_headers` sets them, with a strict CSP. It allows only the site's own scripts and fonts, Google Fonts, and inline styles (for `--c` and the animation delays). It also forbids framing, so the pages can't be shown in an iframe, not even our own.

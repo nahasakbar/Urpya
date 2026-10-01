@@ -20,8 +20,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Baskervville:ital@1&family=DM+Serif+Text&family=Geist:wght@400..600&display=swap">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Oswald:wght@400&family=Space+Mono&display=swap&text=SUPERFRAGREACHPrivateHireOnly">
-  <link rel="stylesheet" href="/assets/site.css?v=4">
-  <script src="/assets/site.js?v=3" defer></script>
+  <link rel="stylesheet" href="/assets/site.css?v=7">
+  <script src="/assets/site.js?v=5" defer></script>
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -48,7 +48,7 @@
   <header class="site-header">
     <div class="wrap">
       <div class="navbar">
-        <a class="brand" href="/" aria-label="Paradox Dynamics, home"><span>Paradox</span><span>Dynamics</span></a>
+        <a class="brand brand-mark" href="/" aria-label="Paradox Dynamics, home"><img src="/assets/pd-mark.svg" alt="" width="184" height="230"></a>
         <nav class="nav" aria-label="Main">
           <a href="/#work">Work</a>
           <a href="/kaayi/">Kaayi</a>
@@ -353,18 +353,26 @@
             <h3>A hand-crafted, colourful icon set for apps and products.</h3>
             <a class="more" href="/work/icons-and-glyphs/">See project <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg></a>
           </div>
-          <figure class="media"><div class="placeholder square"><div><b>Icons &amp; Glyphs</b><small>Image coming soon</small></div></div></figure>
+          <figure class="media">
+                              <div class="orbit" data-reveal role="img" aria-label="Icons and Glyphs: colourful icons on two rings around a rainbow drop">
+            <svg class="orbit-lines" viewBox="0 0 100 100" aria-hidden="true">
+              <circle class="orbit-dash" cx="50" cy="50" r="46"/>
+              <circle class="orbit-dash-in" cx="50" cy="50" r="27.81"/>
+            </svg>
+            <div class="orbit-ring outer" aria-hidden="true">
+              <span class="orbit-item" style="--a:-61.8deg;--r:42.88;--w:14.59;--h:19.92;--i:0"><span class="orbit-icon"><img class="glyph" src="/assets/icons/footprints.svg" alt="" width="74" height="101" loading="lazy"></span></span>
+              <span class="orbit-item" style="--a:22.5deg;--r:35.03;--w:11.24;--h:15.58;--i:1"><span class="orbit-icon"><img class="glyph" src="/assets/icons/train.svg" alt="" width="57" height="79" loading="lazy"></span></span>
+              <span class="orbit-item" style="--a:120.1deg;--r:35.32;--w:10.65;--h:19.13;--i:2"><span class="orbit-icon"><img class="glyph" src="/assets/icons/walker.svg" alt="" width="54" height="97" loading="lazy"></span></span>
+            </div>
+            <div class="orbit-ring inner" aria-hidden="true">
+              <span class="orbit-item" style="--a:-103.3deg;--r:28.36;--w:16.37;--h:19.13;--i:3"><span class="orbit-icon"><img class="glyph" src="/assets/icons/runner.svg" alt="" width="83" height="97" loading="lazy"></span></span>
+              <span class="orbit-item" style="--a:-30.0deg;--r:31.08;--w:19.13;--h:16.56;--i:4"><span class="orbit-icon"><img class="glyph" src="/assets/icons/cyclist.svg" alt="" width="97" height="84" loading="lazy"></span></span>
+            </div>
+            <div class="orbit-core" style="--core:44.57;--core-x:-21.69;--core-y:-18.31;--core-ox:22.19;--core-oy:18.77" aria-hidden="true"><img src="/assets/icons/drop-disc.svg" alt="" width="226" height="226"></div>
+          </div>
+          </figure>
         </article>
 
-        <article class="project" style="--c:#f2a65a">
-          <div class="project-text">
-            <p class="project-name">Hotel Booking App<span class="sep">·</span>Personal</p>
-            <ul class="tags"><li class="tag">UI</li><li class="tag">Prototyping</li><li class="tag">Mobile</li></ul>
-            <h3>Find and book the right stay in a few taps.</h3>
-            <a class="more" href="/work/hotel-booking-app/">See project <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg></a>
-          </div>
-          <figure class="media travel"><img src="/assets/img/travel-app.png" alt="A hotel search screen: destination, dates, guests, and top destinations." width="550" height="882" loading="lazy"></figure>
-        </article>
 
         <article class="project wide" style="--c:#cbb088">
           <div class="wide-head">
