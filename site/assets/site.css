@@ -257,11 +257,15 @@ a.svc-go:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
   margin-top: 24px; padding-top: 24px; border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 .svc-art > svg { display: block; width: 100%; height: auto; max-height: 260px; overflow: visible; }
+.svc-art > svg.sf-art { max-height: 300px; }
 
-/* Superfrag: the bottle rises a little and its halo brightens on hover. */
-.sf-bottle, .sf-halo { transform-box: fill-box; transform-origin: center; transition: transform 500ms var(--ease-out), opacity 500ms var(--ease-out); }
+/* Superfrag: a frosted blue flacon drawn in SVG (shape after the owner's
+   reference, colour after their blue one). On hover it rises, its reflection
+   drops away and the halo brightens. */
+.sf-bottle, .sf-halo, .sf-reflect { transform-box: fill-box; transform-origin: center; transition: transform 500ms var(--ease-out), opacity 500ms var(--ease-out); }
 .sf-halo { opacity: 0.85; }
 .svc-sf:hover .sf-bottle { transform: translateY(-6px); }
+.svc-sf:hover .sf-reflect { transform: translateY(6px); opacity: 0.6; }
 .svc-sf:hover .sf-halo { opacity: 1; transform: scale(1.06); }
 
 /* Reach: the route draws itself once, and again on hover; the pickup pings. */

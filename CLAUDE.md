@@ -128,7 +128,7 @@ Since 2026-10-01 the same web code is wrapped as a native iPhone app with Capaci
 - **Home** (`/`):
   - The wordmark and tagline.
   - **What we do:** the three businesses as service cards in the style of Raycast's extension cards (the owner's reference). Each card has its own tint and glow, an icon tile, the name, an arrow button, the description, a hairline, then an illustration drawn in the page as SVG and HTML (no image files):
-    - **Superfrag:** a made-up "Superfrag eau de parfum" bottle on dark stones. It's illustrative, not a product photo.
+    - **Superfrag:** a realistic "SUPERFRAG / EAU DE PARFUM" bottle drawn in SVG (`sfb-*` ids), not a photo. The shape follows the owner's reference, a flat cushion flacon with a thick glass base and a cylinder cap. The colour follows their frosted royal-blue reference, with a blue-metal cap. Layers: gradient glass, side shading, a glowing base, a thick-glass rim glow, highlights, `feTurbulence` frost grain and a masked floor reflection. The `viewBox` is cropped to the bottle.
     - **Reach** (private hire taxis): a route map from a pickup point to the airport, with a "REACH · Private Hire Only" label.
     - **Studio Chinnoski** (the design studio): our own product, a tilted Kaayi phone.
   - The illustrations move only on hover or once on load, and not at all with reduced motion. On phones the cards scroll sideways and snap.
