@@ -1271,6 +1271,9 @@ async function sendInviteMessage(to, text) {
 
 const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// The company's website, with the full privacy policy, terms and support.
+const COMPANY_SITE = "https://paradoxdynamics.co.uk";
+
 // Where someone you invite can get Kaayi. In the browser this is the site
 // itself; inside the iPhone app (whose own address is capacitor://localhost)
 // it's VITE_PUBLIC_URL, set when the app is built, or else the App Store.
@@ -1558,7 +1561,7 @@ function PrivacyNote() {
       <p>
         Everything is stored with Supabase, a database hosting company, and emails with codes (to confirm your email
         or reset your password) are sent through Gmail. The
-        company that runs Kaayi, Paradox Dynamics, can reach the database, as with any website, but doesn’t look at or share what’s in
+        company that runs Kaayi, Paradox Dynamics Ltd, can reach the database, as with any website, but doesn’t look at or share what’s in
         it. There are no ads, and nothing is sold or used to track you.
         {TURNSTILE_SITE_KEY && " The sign-in page uses Cloudflare Turnstile to check you’re a person, not a bot."}
       </p>
@@ -1574,7 +1577,14 @@ function PrivacyNote() {
         anything important with your lender.
       </p>
       <p className="fl-panel-title fl-serif">Questions</p>
-      <p>Kaayi is run by Paradox Dynamics. Questions or requests about your data: reply to any email from Kaayi.</p>
+      <p>
+        Kaayi is run by Paradox Dynamics Ltd (company no. 17143231). Questions or requests about your data: email{" "}
+        <a href="mailto:hello@paradoxdynamics.co.uk">hello@paradoxdynamics.co.uk</a>. The full privacy policy is at{" "}
+        <a href={`${COMPANY_SITE}/privacy/`} target="_blank" rel="noopener noreferrer">
+          paradoxdynamics.co.uk/privacy
+        </a>
+        .
+      </p>
     </div>
   );
 }
@@ -1744,7 +1754,7 @@ function TermsNote() {
     <div className="fl-prose">
       <p className="fl-panel-title fl-serif">Using Kaayi</p>
       <p>
-        Kaayi is made by Paradox Dynamics to help you keep track of your debts and income and plan how to pay them off. You’re
+        Kaayi is made by Paradox Dynamics Ltd to help you keep track of your debts and income and plan how to pay them off. You’re
         welcome to use it for yourself and to share items with the people you manage them with.
       </p>
       <p className="fl-panel-title fl-serif">Not financial advice</p>
@@ -1764,7 +1774,13 @@ function TermsNote() {
         mistakes, so keep your own copy (Account → Download a backup). You can delete your account at any time.
       </p>
       <p className="fl-panel-title fl-serif">Changes</p>
-      <p>These terms may be updated; the app always shows the latest. Questions: reply to any email from Kaayi.</p>
+      <p>
+        These terms may be updated. The full terms are at{" "}
+        <a href={`${COMPANY_SITE}/terms/`} target="_blank" rel="noopener noreferrer">
+          paradoxdynamics.co.uk/terms
+        </a>
+        . Questions: <a href="mailto:support@paradoxdynamics.co.uk">support@paradoxdynamics.co.uk</a>.
+      </p>
     </div>
   );
 }
@@ -4686,7 +4702,11 @@ function Ledger({ user, onAccountDeleted }) {
             <p className="fl-section-title">Privacy</p>
             <div className="fl-panel">
               <p className="fl-card-sub" style={{ marginBottom: 10 }}>
-                What Kaayi keeps, who can see it, and how to take it with you or delete it.
+                What Kaayi keeps, who can see it, and how to take it with you or delete it. Need help? See{" "}
+                <a href={`${COMPANY_SITE}/support/`} target="_blank" rel="noopener noreferrer">
+                  paradoxdynamics.co.uk/support
+                </a>{" "}
+                or email <a href="mailto:support@paradoxdynamics.co.uk">support@paradoxdynamics.co.uk</a>.
               </p>
               <div className="fl-form-actions">
                 <button className="fl-btn secondary" onClick={() => setShowPrivacy(true)}>

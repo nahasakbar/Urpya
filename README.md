@@ -174,6 +174,22 @@ To run it on your computer: copy `.env.example` to `.env.local`, fill in the
 same two values, then `npm install` and `npm run dev`. `npm test` runs the
 checks.
 
+## The company website
+
+The `site` folder is Paradox Dynamics' website (home, Kaayi, Privacy, Terms
+and Support), for paradoxdynamics.co.uk. It's plain web pages with no build
+step. To put it online with Cloudflare Pages (free, business use allowed):
+
+1. In Cloudflare, open **Workers & Pages → Create → Pages → Import an
+   existing Git repository**, connect GitHub and choose this repository.
+2. Production branch `main`. Framework preset **None**. Leave the build
+   command empty. Build output directory: `site`. Save and deploy.
+3. In the new project, open **Custom domains** and add
+   `paradoxdynamics.co.uk`, then `www.paradoxdynamics.co.uk`.
+
+After that, every upload to GitHub updates the website by itself, just as it
+does the app.
+
 ## In Safari on an iPhone
 
 Open the website's link in **Safari**. **Account → Add due dates to my

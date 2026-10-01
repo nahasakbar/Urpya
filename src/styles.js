@@ -1030,6 +1030,7 @@ export const styles = `
   }
   .fl-steps strong { color: var(--text); font-weight: 600; }
   .fl-prose p { font-size: 14px; line-height: 1.6; color: var(--text-2); margin: 0 0 var(--s-3); }
+  .fl-prose a, .fl-card-sub a { color: var(--accent); text-underline-offset: 3px; overflow-wrap: anywhere; }
   .fl-prose .fl-panel-title { margin: var(--s-5) 0 6px; }
   .fl-prose .fl-panel-title:first-child { margin-top: 0; }
 
