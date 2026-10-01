@@ -1,12 +1,16 @@
 // Cloudflare settings for the company website (paradoxdynamics.co.uk).
-// The Cloudflare Worker "urpya" publishes only the plain pages in site/.
+// The Cloudflare Worker "urpya" publishes the plain pages in site/. Requests
+// for videos run worker/index.js first, so iPhones can play them (see there).
 // The Kaayi app itself is deployed by Vercel, which ignores this file.
 {
   "name": "urpya",
+  "main": "worker/index.js",
   "compatibility_date": "2026-09-01",
   "assets": {
     "directory": "./site",
+    "binding": "ASSETS",
     "not_found_handling": "404-page",
-    "html_handling": "auto-trailing-slash"
+    "html_handling": "auto-trailing-slash",
+    "run_worker_first": ["/assets/video/*"]
   }
 }
