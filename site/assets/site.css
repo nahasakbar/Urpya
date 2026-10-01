@@ -339,7 +339,11 @@ a.svc-go:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
 .media.travel { max-width: 340px; }
 .media.site-shot { max-width: 440px; }
 .media.site-shot img { border-radius: 12px; box-shadow: var(--edge); }
-.media.wide-shot { max-width: 840px; }
+.media.wide-shot { max-width: 640px; }
+/* Landscape videos beside their text: at about half the page width the
+   820 px and 1280 px sources stay sharp on high-resolution screens. */
+.media.video-shot { max-width: 560px; }
+.media.video-shot video { border-radius: var(--r-card-lg); box-shadow: var(--edge); }
 .media.wide-shot > * { border-radius: var(--r-card-lg); }
 .media.wide-shot video { box-shadow: var(--edge); }
 
