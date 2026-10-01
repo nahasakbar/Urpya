@@ -1,0 +1,12 @@
+// Cloudflare settings for the company website (paradoxdynamics.co.uk).
+// The Cloudflare Worker "urpya" publishes only the plain pages in site/.
+// The Kaayi app itself is deployed by Vercel, which ignores this file.
+{
+  "name": "urpya",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./site",
+    "not_found_handling": "404-page",
+    "html_handling": "auto-trailing-slash"
+  }
+}

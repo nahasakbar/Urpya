@@ -178,17 +178,14 @@ checks.
 
 The `site` folder is Paradox Dynamics' website (home, Kaayi, Privacy, Terms
 and Support), for paradoxdynamics.co.uk. It's plain web pages with no build
-step. To put it online with Cloudflare Pages (free, business use allowed):
+step. Cloudflare publishes it with a Worker called **urpya**, which is
+connected to this GitHub repository. `wrangler.jsonc` tells it to publish
+only the `site` folder, so don't delete that file. Every upload to GitHub
+updates the website by itself, just as it does the app.
 
-1. In Cloudflare, open **Workers & Pages → Create → Pages → Import an
-   existing Git repository**, connect GitHub and choose this repository.
-2. Production branch `main`. Framework preset **None**. Leave the build
-   command empty. Build output directory: `site`. Save and deploy.
-3. In the new project, open **Custom domains** and add
-   `paradoxdynamics.co.uk`, then `www.paradoxdynamics.co.uk`.
-
-After that, every upload to GitHub updates the website by itself, just as it
-does the app.
+To connect the web address (once): in Cloudflare, open **Workers & Pages →
+urpya → Settings → Domains & Routes → Add → Custom domain**, and add
+`paradoxdynamics.co.uk`, then `www.paradoxdynamics.co.uk`.
 
 ## In Safari on an iPhone
 
