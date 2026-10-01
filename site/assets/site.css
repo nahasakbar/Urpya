@@ -325,12 +325,14 @@ a.svc-go:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
 .media { margin: 0; justify-self: center; width: 100%; }
 .media img, .media video { display: block; width: 100%; height: auto; }
 .media.phone-shot { max-width: 311px; }
-.media.phone-shot img { border-radius: 32px; box-shadow: var(--edge); }
+.media video { background: var(--surface-card); }
+.media.phone-shot img, .media.phone-shot video { border-radius: 32px; box-shadow: var(--edge); }
 .media.travel { max-width: 340px; }
 .media.site-shot { max-width: 440px; }
 .media.site-shot img { border-radius: 12px; box-shadow: var(--edge); }
 .media.wide-shot { max-width: 840px; }
 .media.wide-shot > * { border-radius: var(--r-card-lg); }
+.media.wide-shot video { box-shadow: var(--edge); }
 
 /* A stand-in until the real image or video arrives: an edge-defined card. */
 .placeholder {

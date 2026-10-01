@@ -135,9 +135,13 @@ Since 2026-10-01 the same web code is wrapped as a native iPhone app with Capaci
   - **Products & projects:** Kaayi first, with the owner's request to list it as a product rather than a business, then the Podcast App, Voizzit, Dealsbreaker, Edfundo, Icons & Glyphs, Hotel Booking App (a stand-in name chosen by Claude) and Roads.
   - The contact section, with hello@ and support@.
 - **Project pages:** `/work/<slug>/`, one per project. The Kaayi product page is `/kaayi/`.
-- **Images:**
-  - The three real screens (Voizzit, Edfundo's site, the hotel app) came from the Figma file, in `site/assets/img/`.
-  - The other projects show a `.placeholder` box ("Image/Video coming soon") until the owner sends the final images and videos. To swap one in, replace the placeholder `<div>` inside its `<figure class="media …">` with an `<img>`, or with `<video autoplay muted loop playsinline>`, on both the home page and that project's page.
+- **Images and videos:**
+  - Images live in `site/assets/img/`. The Edfundo site and the hotel app screens came from the Figma file.
+  - Videos live in `site/assets/video/`. Voizzit, Dealsbreaker and Roads came from the owner on 2026-10-01. Each was re-saved with `avconvert --preset PresetPassthrough`, which keeps the quality but moves the index to the front so playback starts before the download finishes, and strips private metadata. Each has a `*-poster.jpg` frame (made with `qlmanage -t`).
+  - On the home page a video is `<video muted loop playsinline preload="none" controls data-autoplay>`. On its project page it's the same with `preload="metadata"` and `data-autoplay="keep-controls"`, so the controls stay and visitors can turn the sound on.
+  - `site.js` plays a video only while it's on screen and pauses it otherwise. On the home page it removes the controls. With reduced motion, or no JavaScript, nothing autoplays and the normal controls show.
+  - Pages with videos must load `site.js`.
+  - The Podcast App and Icons & Glyphs still show a `.placeholder` box until the owner sends files. To swap one in, replace the placeholder `<div>` inside its `<figure class="media …">` on both the home page and that project's page.
   - Figma's free plan allows only 20 reads a month (see memory), so ask the owner to export files rather than reading Figma again.
 - **Other pages:** `/privacy/`, `/terms/`, `/support/` (FAQ, plus `#delete-account` for the App Store and Google Play), and `404.html` (served for missing pages through `not_found_handling`). They all share the same header (small wordmark + Work, Kaayi, Contact) and footer.
 - **Security headers:** `_headers` sets them, with a strict CSP. It allows only the site's own scripts and fonts, Google Fonts, and inline styles (for `--c` and the animation delays). It also forbids framing, so the pages can't be shown in an iframe, not even our own.

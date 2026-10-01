@@ -17,3 +17,28 @@ document.querySelectorAll("[data-copy]").forEach((button) => {
     }
   });
 });
+
+// Project videos ([data-autoplay]): play silently while on screen and pause
+// when scrolled away, so a phone never downloads or runs them all at once. On
+// the home page they loop without controls; on a project's own page
+// (data-autoplay="keep-controls") the controls stay so people can turn the
+// sound on. Anyone who asked for less motion, or whose browser can't tell
+// what's on screen, gets the normal play button instead.
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const autoVideos = document.querySelectorAll("video[data-autoplay]");
+if (autoVideos.length && !reduceMotion && "IntersectionObserver" in window) {
+  const onScreen = new IntersectionObserver(
+    (entries) => {
+      entries.forEach(({ target, isIntersecting }) => {
+        if (isIntersecting) target.play().catch(() => {});
+        else target.pause();
+      });
+    },
+    { threshold: 0.35 }
+  );
+  autoVideos.forEach((video) => {
+    if (video.dataset.autoplay !== "keep-controls") video.removeAttribute("controls");
+    video.muted = true;
+    onScreen.observe(video);
+  });
+}
