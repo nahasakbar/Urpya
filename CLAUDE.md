@@ -126,12 +126,17 @@ Since 2026-10-01 the same web code is wrapped as a native iPhone app with Capaci
   - Stylesheet and script links carry `?v=N`. Bump N when changing them, because older visitors may still hold the old copy (`_headers` now only lets browsers keep images and fonts for a day).
 - **Home** (`/`):
   - The wordmark and tagline.
-  - The three businesses as cards: **Superfrag** (fragrances), **Reach** (private hire taxis) and **Studio Chinnoski** (the design studio). Their logos are set in Google fonts close to the design's, until the owner supplies the logo files. Each button reads "Coming soon" (`aria-disabled`) until that business has its own domain, then becomes a link ("Shop now", "Book a ride", "Start a project").
+  - **What we do:** the three businesses as service cards in the style of Raycast's extension cards (the owner's reference). Each card has its own tint and glow, an icon tile, the name, an arrow button, the description, a hairline, then an illustration drawn in the page as SVG and HTML (no image files):
+    - **Superfrag:** a made-up "Superfrag eau de parfum" bottle on dark stones. It's illustrative, not a product photo.
+    - **Reach** (private hire taxis): a route map from a pickup point to the airport, with a "REACH · Private Hire Only" label.
+    - **Studio Chinnoski** (the design studio): our own product, a tilted Kaayi phone.
+  - The illustrations move only on hover or once on load, and not at all with reduced motion. On phones the cards scroll sideways and snap.
+  - Each arrow is an `aria-disabled` span reading "Website coming soon" until that business has its own domain. Then make it an `<a class="svc-go" href=…>` and drop the "coming soon" line.
   - **Products & projects:** Kaayi first, with the owner's request to list it as a product rather than a business, then the Podcast App, Voizzit, Dealsbreaker, Edfundo, Icons & Glyphs, Hotel Booking App (a stand-in name chosen by Claude) and Roads.
   - The contact section, with hello@ and support@.
 - **Project pages:** `/work/<slug>/`, one per project. The Kaayi product page is `/kaayi/`.
 - **Images:**
-  - The three real screens (Voizzit, Edfundo's site, the hotel app) and the Superfrag bottle photo came from the Figma file, in `site/assets/img/`.
+  - The three real screens (Voizzit, Edfundo's site, the hotel app) came from the Figma file, in `site/assets/img/`.
   - The other projects show a `.placeholder` box ("Image/Video coming soon") until the owner sends the final images and videos. To swap one in, replace the placeholder `<div>` inside its `<figure class="media …">` with an `<img>`, or with `<video autoplay muted loop playsinline>`, on both the home page and that project's page.
   - Figma's free plan allows only 20 reads a month (see memory), so ask the owner to export files rather than reading Figma again.
 - **Other pages:** `/privacy/`, `/terms/`, `/support/` (FAQ, plus `#delete-account` for the App Store and Google Play), and `404.html` (served for missing pages through `not_found_handling`). They all share the same header (small wordmark + Work, Kaayi, Contact) and footer.
