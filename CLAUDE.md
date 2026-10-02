@@ -150,7 +150,8 @@ Since 2026-10-01 the same web code is wrapped as a native iPhone app with Capaci
     - **Reach** (private hire taxis): a route map from a pickup point to the airport, with a "REACH · Private Hire Only" label.
     - **Studio Chinnoski** (the design studio): our own product, a tilted Kaayi phone.
   - The illustrations move only on hover or once on load, and not at all with reduced motion. On phones the cards scroll sideways and snap.
-  - Each arrow is an `aria-disabled` span reading "Website coming soon" until that business has its own domain. Then make it an `<a class="svc-go" href=…>` and drop the "coming soon" line.
+  - Each arrow is an `aria-disabled` span reading "Website coming soon" until that business has its own domain. Then make it an `<a class="svc-go" href=…>` and put the domain where "Website coming soon" was, so the three cards stay aligned.
+  - **Superfrag** has its own site since 2026-10-02, so its arrow links to https://superfrag.com and the line under its name reads "superfrag.com". That site is a separate project and repo (`~/Projects/superfrag`, GitHub `nahasakbar/superfrag`, also on Cloudflare). Reach and Studio Chinnoski are still "coming soon".
   - **Products & projects:** Kaayi first, with the owner's request to list it as a product rather than a business, then the Podcast App, Voizzit, Dealsbreaker, Edfundo, Icons & Glyphs and Roads. A Hotel Booking App project was removed at the owner's request.
   - The contact section, with hello@ and support@.
 - **Project pages:** `/work/<slug>/`, one per project. The Kaayi product page is `/kaayi/`.
