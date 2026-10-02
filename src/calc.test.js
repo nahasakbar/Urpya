@@ -11,6 +11,8 @@ import {
   upcomingPlanAmounts,
   planShortfall,
   planYearlyRate,
+  equalPayment,
+  termPayoff,
   computeIncome,
   expectedIncomeFor,
   nextIncomeRise,
@@ -115,6 +117,105 @@ describe("repayment plans", () => {
     const tight = simulateStrategy([bank, plan], "avalanche", 30000);
     expect(tight.feasible).toBe(false);
     expect(Math.round(tight.minRequired)).toBe(10000 + amounts[23]);
+  });
+});
+
+describe("total payable over a payment term", () => {
+  it("matches a bank EMI: ₹1,00,000 at 12% over 2 years is about ₹4,707 a month, ₹1,12,976 in all", () => {
+    const e = equalPayment(100000, 0.12, 24);
+    expect(e.monthly).toBeCloseTo(4707.35, 2);
+    expect(e.total).toBeCloseTo(112976.33, 1);
+    expect(e.interest).toBeCloseTo(12976.33, 1);
+    // No interest: just the amount split evenly.
+    expect(equalPayment(120000, 0, 12)).toEqual({ monthly: 10000, total: 120000, interest: 0 });
+    expect(equalPayment(0, 0.12, 24)).toBe(null);
+    expect(equalPayment(1000, 0.12, 0)).toBe(null);
+  });
+
+  it("gives the same figures for a brand-new debt", () => {
+    const lender = { type: "interest", totalAmount: 100000, annualRate: 0.12, startMonth: "2026-01", termMonths: 24 };
+    const p = termPayoff(lender, {}, "2026-01");
+    const e = equalPayment(100000, 0.12, 24);
+    expect(p.endKey).toBe("2027-12");
+    expect(p.paymentsLeft).toBe(24);
+    expect(p.monthly).toBeCloseTo(e.monthly, 6);
+    expect(p.total).toBeCloseTo(e.total, 6);
+    expect(p.interest).toBeCloseTo(e.interest, 6);
+  });
+
+  it("only applies to an interest debt with a term that isn't on a repayment plan", () => {
+    const base = { totalAmount: 50000, annualRate: 0.1, startMonth: "2026-01", termMonths: 12 };
+    expect(termPayoff({ ...base, type: "fixed" }, {}, "2026-03")).toBe(null);
+    expect(termPayoff({ ...base, type: "interest", termMonths: null }, {}, "2026-03")).toBe(null);
+    expect(termPayoff({ ...base, type: "interest", repaymentPlan: { received: 40000, amounts: [50000] } }, {}, "2026-03")).toBe(null);
+  });
+
+  it("once the term is over, what's left is simply what's still owed", () => {
+    const lender = { type: "interest", totalAmount: 10000, annualRate: 0.12, startMonth: "2026-01", termMonths: 3 };
+    const entries = { "2026-01": { amounts: { A: 3000 } }, "2026-02": { amounts: { A: 3000 } } };
+    const p = termPayoff(lender, entries, "2026-06");
+    const { finalBalance } = computeSchedule(lender, entries, "2026-06");
+    expect(p.paymentsLeft).toBe(0);
+    expect(p.monthly).toBe(null);
+    expect(p.remaining).toBeCloseTo(finalBalance, 6);
+    expect(p.total).toBeCloseTo(6000 + finalBalance, 6);
+  });
+
+  // The proof that the monthly figure is right: record exactly that payment in
+  // every remaining month of the term and the app's own balance sum must reach
+  // zero in the term's last month, with every payment adding up to `total`.
+  it("paying the monthly figure clears the debt exactly at the end of the term, whatever came before", () => {
+    const r = seeded(20261002);
+    for (let n = 0; n < 400; n++) {
+      const startMonth = monthKeyAdd("2024-01", Math.floor(r.rnd() * 30));
+      const termMonths = 1 + Math.floor(r.rnd() * 60);
+      const lender = {
+        type: "interest",
+        totalAmount: 1000 + Math.round(r.rnd() * 2000000),
+        annualRate: r.pick([0, 0.05, 0.09, 0.105, 0.12, 0.18, 0.24, 0.36]),
+        startMonth,
+        termMonths,
+        // Sometimes the term begins before or after tracking did.
+        termStart: r.rnd() < 0.3 ? monthKeyAdd(startMonth, Math.floor(r.rnd() * 9) - 2) : null,
+      };
+      const termStart = lender.termStart || startMonth;
+      const endKey = monthKeyAdd(termStart, termMonths - 1);
+      // "Today" is anywhere from the start to the term's last month (or the
+      // start itself, when the term ended before tracking began).
+      let asOf = monthKeyAdd(startMonth, Math.floor(r.rnd() * 40));
+      if (asOf > endKey) asOf = endKey;
+      if (asOf < startMonth) asOf = startMonth;
+      // A messy history: some months paid (small, so it can't be cleared early), some missed.
+      const entries = {};
+      for (let k = startMonth; k <= asOf; k = monthKeyAdd(k, 1)) {
+        if (k === asOf ? r.rnd() < 0.5 : r.rnd() < 0.6) entries[k] = { amounts: { A: Math.round(r.rnd() * lender.totalAmount * 0.01) } };
+      }
+      const p = termPayoff(lender, entries, asOf);
+      expect(p.endKey).toBe(endKey);
+      if (p.paymentsLeft === 0) {
+        // No payment months left: the term is over, or ends this month and is already recorded.
+        expect(p.remaining).toBeCloseTo(p.balance, 6);
+        continue;
+      }
+      expect(p.monthly).toBeGreaterThan(0);
+      const future = { ...entries };
+      let count = 0;
+      for (let k = asOf; k <= endKey; k = monthKeyAdd(k, 1)) {
+        const payable = k >= termStart && !(k === asOf && entries[asOf]);
+        if (payable) {
+          future[k] = { amounts: { A: p.monthly } };
+          count++;
+        }
+      }
+      expect(count).toBe(p.paymentsLeft);
+      const end = computeSchedule(lender, future, endKey);
+      expect(Math.abs(end.finalBalance)).toBeLessThan(0.01);
+      // The month before, something was still owed: it isn't cleared early.
+      if (endKey > asOf) expect(computeSchedule(lender, future, monthKeyAdd(endKey, -1)).finalBalance).toBeGreaterThan(0.01);
+      const allPaid = sum(end.rows.map((row) => row.totalPaid));
+      expect(allPaid).toBeCloseTo(p.total, 4);
+      expect(p.interest).toBeCloseTo(p.total - lender.totalAmount, 4);
+    }
   });
 });
 

@@ -365,6 +365,69 @@ export function planYearlyRate(received, amounts) {
   return ((lo + hi) / 2) * 12;
 }
 
+// ---- Paying an interest debt off within its term ----
+// For a debt that charges interest and has a payment term: the equal monthly
+// payment that clears it by the term's last month, and what the whole debt adds
+// up to that way. Display only: it never feeds a balance or the Strategy.
+
+// The standard figure for a fresh debt: `months` equal payments, the first in
+// the month the debt starts (after that month's interest), like a bank EMI.
+// Null if the inputs don't describe a real loan.
+export function equalPayment(amount, annualRate, months) {
+  const P = Number(amount) || 0;
+  const n = Math.round(Number(months) || 0);
+  if (!(P > 0) || !(n >= 1)) return null;
+  const r = (Number(annualRate) || 0) / 12;
+  const monthly = r > 0 ? (P * r) / (1 - Math.pow(1 + r, -n)) : P / n;
+  return { monthly, total: monthly * n, interest: monthly * n - P };
+}
+
+// The same from where the debt stands today, so it stays true after missed,
+// part or extra payments. `finalBalance` from computeSchedule already holds
+// this month's interest and any payment recorded this month. So this month is
+// a payment month with no more interest to add (unless it's already recorded),
+// and each later month adds one month's interest before its payment: the order
+// computeSchedule uses. Returns null when it doesn't apply (no interest, no
+// term, or on a repayment plan), otherwise:
+//   endKey        the term's last month
+//   paidSoFar     everything recorded up to now
+//   balance       what's owed today
+//   paymentsLeft  payment months left in the term (0 once it's over)
+//   monthly       the equal payment for each of them (null once it's over)
+//   remaining     what's still to pay: monthly x paymentsLeft, or the balance
+//                 itself once the term is over
+//   total         paidSoFar + remaining: the debt's whole cost over the term
+//   interest      total minus the amount borrowed
+export function termPayoff(lender, entriesMap, asOfKey) {
+  if (!lender || lender.type === "fixed" || lender.repaymentPlan || !(Number(lender.termMonths) >= 1)) return null;
+  const borrowed = Number(lender.totalAmount) || 0;
+  if (!(borrowed > 0)) return null;
+  const termStart = lender.termStart || lender.startMonth || asOfKey;
+  const endKey = monthKeyAdd(termStart, lender.termMonths - 1);
+  const { rows, finalBalance } = computeSchedule(lender, entriesMap, asOfKey);
+  const paidSoFar = rows.reduce((s, r) => s + r.totalPaid, 0);
+  const rate = (Number(lender.annualRate) || 0) / 12;
+  // Payment months still to come, as offsets from this month (0 = this month).
+  const recordedThisMonth = !!(entriesMap && entriesMap[asOfKey]);
+  const first = Math.max(recordedThisMonth ? 1 : 0, monthsBetween(asOfKey, termStart));
+  const last = monthsBetween(asOfKey, endKey);
+  const paymentsLeft = Math.max(last - first + 1, 0);
+  let monthly = null;
+  let remaining = finalBalance;
+  if (paymentsLeft > 0 && finalBalance > 0) {
+    // balance = monthly x (v^first + ... + v^last), v = 1 / (1 + rate)
+    let factor = 0;
+    for (let k = first; k <= last; k++) factor += Math.pow(1 + rate, -k);
+    monthly = finalBalance / factor;
+    remaining = monthly * paymentsLeft;
+  } else if (finalBalance <= 0) {
+    monthly = paymentsLeft > 0 ? 0 : null;
+    remaining = 0;
+  }
+  const total = paidSoFar + remaining;
+  return { endKey, paidSoFar, balance: finalBalance, paymentsLeft, monthly, remaining, total, interest: Math.max(total - borrowed, 0) };
+}
+
 // ---- Income sources ----
 // A business, property, farm etc. that brings money in. Saved in data.incomes
 // as { id, name, category, capital, startMonth, usualIncome, usualExpenses,

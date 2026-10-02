@@ -4,6 +4,7 @@ import {
   Landmark,
   Plus,
   ChevronRight,
+  ChevronDown,
   ChevronLeft,
   X,
   Trash2,
@@ -63,6 +64,8 @@ import {
   upcomingPlanAmounts,
   planShortfall,
   planYearlyRate,
+  equalPayment,
+  termPayoff,
   firstIncomeRise,
   hasIncomeGrowth,
   expectedIncomeFor,
@@ -211,6 +214,9 @@ function LenderForm({ initial, onSave, onCancel, inSheet }) {
   const planMismatch = !!planNumbers && Math.abs(planSum - Number(repayTotal)) > 0.5;
   const planRate = planNumbers && !planMismatch ? planYearlyRate(Number(amount), planNumbers) : null;
   const planFirstKey = termStart || startMonth;
+  // An interest debt with a term: what it costs if paid in equal monthly amounts.
+  const termEstimate =
+    hasTerm && !hasPlan && type === "interest" ? equalPayment(Number(amount), (Number(rate) || 0) / 100, termMonthsValue) : null;
 
   // Changing what the plan is built from re-spreads it evenly.
   function resetPlan() {
@@ -424,6 +430,19 @@ function LenderForm({ initial, onSave, onCancel, inSheet }) {
                 : "Same as “Started tracking from” unless you change it — e.g. if the debt began before you started tracking it here."}
             </p>
           </div>
+
+          {termEstimate && (
+            <div className="ox-payoff">
+              <div className="ox-payoff-row">
+                <span className="fl-stat-label">Total payable over the term</span>
+                <span className="fl-stat-value">{fmt(termEstimate.total)}</span>
+              </div>
+              <p className="fl-card-sub">
+                About {fmt(termEstimate.monthly)} a month for {termMonthsValue} month{termMonthsValue === 1 ? "" : "s"}, paid in equal amounts
+                {termEstimate.interest > 0.5 ? ` · ${fmt(termEstimate.interest)} of it is interest` : ""}.
+              </p>
+            </div>
+          )}
         </>
       )}
 
@@ -2494,6 +2513,8 @@ function Ledger({ user, onAccountDeleted }) {
   const [editingIncomeId, setEditingIncomeId] = useState(null);
   const [pendingIncomeMonth, setPendingIncomeMonth] = useState(null);
   const [showBudgetEditor, setShowBudgetEditor] = useState(false);
+  // Overview → This month: the first few rows, or all of them.
+  const [showAllMonth, setShowAllMonth] = useState(false);
   const [editingGoal, setEditingGoal] = useState(false);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
@@ -3462,6 +3483,30 @@ function Ledger({ user, onAccountDeleted }) {
     .reduce((s, x) => s + (x.status === "short" ? x.short : x.amount || 0), 0);
   const monthPaid = thisMonthItems.filter((x) => x.kind === "debt").reduce((s, x) => s + (x.paid || 0), 0);
   const monthIn = thisMonthItems.filter((x) => x.kind === "income").reduce((s, x) => s + (x.amount || 0), 0);
+  // The Overview lists what needs doing first: late, then due soon, then the
+  // rest still to pay, then income still expected, and what's already done last.
+  const monthRank = (x) =>
+    x.kind === "debt"
+      ? x.status === "overdue" || x.status === "short"
+        ? 0
+        : x.status === "soon"
+        ? 1
+        : x.status === "paid"
+        ? 5
+        : 2
+      : x.status === "received"
+      ? 5
+      : 3;
+  const monthItemsByNeed = [...thisMonthItems].sort(
+    (a, b) => monthRank(a) - monthRank(b) || (a.day || 99) - (b.day || 99) || a.name.localeCompare(b.name)
+  );
+  // Show them all when there are only a few; otherwise the first four.
+  const MONTH_ROWS = 4;
+  const monthItemsShown = showAllMonth || monthItemsByNeed.length <= MONTH_ROWS + 1 ? monthItemsByNeed : monthItemsByNeed.slice(0, MONTH_ROWS);
+  const monthDebts = thisMonthItems.filter((x) => x.kind === "debt");
+  const monthDebtsPaid = monthDebts.filter((x) => x.status === "paid").length;
+  // Debts with earlier months that were never recorded as paid.
+  const debtsWithMissedMonths = lenderSummaries.filter((l) => l.missedMonths && l.missedMonths.length > 0);
   // New: nothing saved yet. (metaRef also notices settings saved since the last
   // load, e.g. choosing a currency in Account before getting started.)
   const isEmptyAccount =
@@ -3822,6 +3867,9 @@ function Ledger({ user, onAccountDeleted }) {
           </div>
         )}
 
+        {/* The Overview answers three things and nothing else: where you stand,
+            what to do this month, and where you're heading. The debt list, the
+            breakdowns and income each live on their own tab. */}
         {view === "dashboard" && !isEmptyAccount && (data.lenders.length > 0 || (data.incomes || []).length > 0) && (
           <div className="ox-grid two">
             <div className="ox-stack">
@@ -3850,56 +3898,118 @@ function Ledger({ user, onAccountDeleted }) {
                 </div>
               </section>
 
-              <div className="ox-tiles">
-                <button
-                  className="ox-tile ox-rise"
-                  style={{ "--i": 1 }}
-                  onClick={() => (thisMonthItems.length ? document.getElementById("ox-this-month")?.scrollIntoView({ behavior: "smooth", block: "start" }) : go("loans"))}
-                >
-                  <span className={"ox-tile-icon" + (monthDue > 0.5 ? " neg" : " pos")}>
-                    <CalendarClock size={16} />
-                  </span>
-                  <span className="ox-label">Still to pay</span>
-                  <span className="ox-tile-value">
-                    <Amount value={monthDue} />
-                  </span>
-                  <span className="ox-tile-sub">
-                    {monthPaid > 0.5 ? `${fmt(monthPaid)} paid in ${monthKeyShort(asOfKey).split(" ")[0]}` : `this month · ${monthKeyShort(asOfKey)}`}
-                  </span>
-                </button>
-                <button className="ox-tile ox-rise" style={{ "--i": 2 }} onClick={() => go("income")}>
-                  <span className="ox-tile-icon pos">
-                    <TrendingUp size={16} />
-                  </span>
-                  <span className="ox-label">{recordedThisMonth.length > 0 ? "Profit this month" : "Usual profit"}</span>
-                  <span className={"ox-tile-value" + ((recordedThisMonth.length > 0 ? profitThisMonth : usualProfitTotal) < 0 ? " ox-neg" : "")}>
-                    <Amount value={recordedThisMonth.length > 0 ? profitThisMonth : usualProfitTotal} signed />
-                  </span>
-                  <span className="ox-tile-sub">
-                    {activeIncomes.length === 0
-                      ? "No income sources yet"
-                      : `${recordedThisMonth.length} of ${activeIncomes.length} recorded`}
-                  </span>
-                </button>
-                <button className="ox-tile ox-rise" style={{ "--i": 3 }} onClick={() => go("strategy")}>
-                  <span className="ox-tile-icon accent">
-                    <Target size={16} />
-                  </span>
-                  <span className="ox-label">Debt-free in</span>
-                  <span className="ox-tile-value">
-                    {strategyResult && strategyResult.feasible ? monthsLabel(strategyResult.months) : strategyLoans.length === 0 ? "Done" : "—"}
-                  </span>
-                  <span className="ox-tile-sub">
-                    {strategyResult && strategyResult.feasible
-                      ? `by ${byMonth(strategyResult.months)}`
-                      : strategyLoans.length === 0
-                      ? "Nothing owed"
-                      : "Set your budget"}
-                  </span>
-                </button>
-              </div>
 
-              <section className="ox-card ox-rise" style={{ "--i": 4 }}>
+              {thisMonthItems.length > 0 && (
+                <section id="ox-this-month" className="fl-month-list ox-rise" style={{ "--i": 1 }}>
+                  <div className="ox-month-head">
+                    <div style={{ minWidth: 0 }}>
+                      <p className="ox-label">This month · {monthKeyLabel(asOfKey)}</p>
+                      <p className={"ox-amount-lg" + (monthDebts.length > 0 && monthDue <= 0.5 ? " ox-pos" : "")}>
+                        {monthDebts.length === 0 ? <Amount value={monthIn} /> : monthDue > 0.5 ? <Amount value={monthDue} /> : "All paid"}
+                      </p>
+                      <p className="fl-card-sub">
+                        {monthDebts.length === 0
+                          ? "expected to come in"
+                          : [
+                              monthDue > 0.5 ? "still to pay" : null,
+                              monthPaid > 0.5 ? `${fmt(monthPaid)} paid` : null,
+                              monthIn > 0.5 ? `${fmt(monthIn)} coming in` : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                      </p>
+                    </div>
+                    {monthDebts.length > 0 && (
+                      <span className={"fl-chip " + (monthDebtsPaid === monthDebts.length ? "chip-green" : "chip-grey")} style={{ marginTop: 0, flex: "none" }}>
+                        {monthDebtsPaid} of {monthDebts.length} paid
+                      </span>
+                    )}
+                  </div>
+                  {debtsWithMissedMonths.length > 0 && (
+                    <button className="fl-month-item" onClick={() => go("loans")}>
+                      <span className="fl-day ox-day-late">
+                        <AlertCircle size={18} />
+                      </span>
+                      <span className="fl-month-item-main">
+                        <span className="fl-list-row-name">
+                          {debtsWithMissedMonths.length === 1
+                            ? "1 debt has earlier months missed"
+                            : `${debtsWithMissedMonths.length} debts have earlier months missed`}
+                        </span>
+                        <span className="fl-card-sub">{debtsWithMissedMonths.map((l) => l.name).join(", ")}</span>
+                      </span>
+                      <ChevronRight size={16} className="ox-faint" />
+                    </button>
+                  )}
+                  {monthItemsShown.map((x) => (
+                    <button
+                      key={x.kind + x.id}
+                      className="fl-month-item"
+                      disabled={!x.canEdit}
+                      onClick={() => openRecord(x.kind, x.id)}
+                      aria-label={(x.kind === "debt" ? "Record payment for " : "Record income for ") + x.name}
+                    >
+                      <span className={"fl-day" + (x.kind === "income" ? " fl-day-in" : x.status === "overdue" || x.status === "short" ? " ox-day-late" : "")}>
+                        <span className="fl-day-num">{x.day || "—"}</span>
+                        <span className="fl-day-mon">{monthKeyShort(asOfKey).split(" ")[0]}</span>
+                      </span>
+                      <span className="fl-month-item-main">
+                        <span className="fl-list-row-name">{x.name}</span>
+                        <span className="fl-card-sub">
+                          {x.kind === "income"
+                            ? x.status === "received"
+                              ? `${fmt(x.amount)} came in`
+                              : `${fmt(x.amount)} expected`
+                            : x.status === "paid"
+                            ? `${fmt(x.amount)} paid`
+                            : x.status === "short"
+                            ? `${fmt(x.paid)} paid · ${fmt(x.short)} short`
+                            : x.amount == null
+                            ? "Payment due"
+                            : x.fromPlan
+                            ? `Plan suggests ${fmt(x.amount)}`
+                            : `${fmt(x.amount)} due`}
+                        </span>
+                      </span>
+                      <span
+                        className={
+                          x.status === "paid" || x.status === "received"
+                            ? "fl-chip chip-green"
+                            : x.status === "overdue" || x.status === "short"
+                            ? "fl-overdue"
+                            : "fl-chip chip-grey"
+                        }
+                        style={{ marginTop: 0 }}
+                      >
+                        {x.status === "paid"
+                          ? "Paid"
+                          : x.status === "received"
+                          ? "In"
+                          : x.status === "overdue"
+                          ? "Overdue"
+                          : x.status === "short"
+                          ? "Short"
+                          : x.status === "soon"
+                          ? x.daysUntil === 0
+                            ? "Today"
+                            : `In ${x.daysUntil} day${x.daysUntil === 1 ? "" : "s"}`
+                          : x.kind === "income"
+                          ? "Expected"
+                          : "Record"}
+                      </span>
+                    </button>
+                  ))}
+                  {monthItemsShown.length < monthItemsByNeed.length && (
+                    <button className="ox-month-more" onClick={() => setShowAllMonth(true)}>
+                      Show all {monthItemsByNeed.length} <ChevronDown size={14} />
+                    </button>
+                  )}
+                </section>
+              )}
+            </div>
+
+            <div className="ox-stack">
+              <section className="ox-card ox-rise" style={{ "--i": 2 }}>
                 <div className="ox-card-head">
                   <div>
                     <h2 className="ox-card-title">Path to debt-free</h2>
@@ -3940,123 +4050,6 @@ function Ledger({ user, onAccountDeleted }) {
                   </div>
                 )}
               </section>
-
-              {lenderSummaries.length > 0 && (
-                <>
-                  <p className="ox-section">
-                    Your debts
-                    <button className="ox-section-link" onClick={() => go("loans")}>
-                      See all <ChevronRight size={14} />
-                    </button>
-                  </p>
-                  <div>{lenderSummaries.map((l, i) => renderDebtCard(l, i))}</div>
-                </>
-              )}
-            </div>
-
-            <div className="ox-stack">
-              {thisMonthItems.length > 0 && (
-                <section id="ox-this-month">
-            {thisMonthItems.length > 0 && (
-                  <>
-                    <p className="ox-section">
-                      This month <span className="ox-faint" style={{ fontWeight: 500 }}>{monthKeyLabel(asOfKey)}</span>
-                    </p>
-                    <div className="fl-month-list ox-rise" style={{ "--i": 2 }}>
-                      {thisMonthItems.map((x) => (
-                        <button
-                          key={x.kind + x.id}
-                          className="fl-month-item"
-                          disabled={!x.canEdit}
-                          onClick={() => openRecord(x.kind, x.id)}
-                          aria-label={(x.kind === "debt" ? "Record payment for " : "Record income for ") + x.name}
-                        >
-                          <span className={"fl-day" + (x.kind === "income" ? " fl-day-in" : x.status === "overdue" || x.status === "short" ? " ox-day-late" : "")}>
-                            <span className="fl-day-num">{x.day || "—"}</span>
-                            <span className="fl-day-mon">{monthKeyShort(asOfKey).split(" ")[0]}</span>
-                          </span>
-                          <span className="fl-month-item-main">
-                            <span className="fl-list-row-name">{x.name}</span>
-                            <span className="fl-card-sub">
-                              {x.kind === "income"
-                                ? x.status === "received"
-                                  ? `${fmt(x.amount)} came in`
-                                  : `${fmt(x.amount)} expected`
-                                : x.status === "paid"
-                                ? `${fmt(x.amount)} paid`
-                                : x.status === "short"
-                                ? `${fmt(x.paid)} paid · ${fmt(x.short)} short`
-                                : x.amount == null
-                                ? "Payment due"
-                                : x.fromPlan
-                                ? `Plan suggests ${fmt(x.amount)}`
-                                : `${fmt(x.amount)} due`}
-                            </span>
-                          </span>
-                          <span
-                            className={
-                              x.status === "paid" || x.status === "received"
-                                ? "fl-chip chip-green"
-                                : x.status === "overdue" || x.status === "short"
-                                ? "fl-overdue"
-                                : "fl-chip chip-grey"
-                            }
-                            style={{ marginTop: 0 }}
-                          >
-                            {x.status === "paid"
-                              ? "Paid"
-                              : x.status === "received"
-                              ? "In"
-                              : x.status === "overdue"
-                              ? "Overdue"
-                              : x.status === "short"
-                              ? "Short"
-                              : x.status === "soon"
-                              ? x.daysUntil === 0
-                                ? "Today"
-                                : `In ${x.daysUntil} day${x.daysUntil === 1 ? "" : "s"}`
-                              : x.kind === "income"
-                              ? "Expected"
-                              : "Record"}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
-                  <p className="fl-card-sub" style={{ margin: "10px 4px 0" }}>
-                    {fmt(monthDue)} still to pay · {fmt(monthPaid)} paid · {fmt(monthIn)} coming in
-                  </p>
-                </section>
-              )}
-
-              {oweItems.length > 1 && (
-                <section className="ox-card ox-rise" style={{ "--i": 3 }}>
-                  <div className="ox-card-head">
-                    <div>
-                      <h2 className="ox-card-title">Where you owe</h2>
-                      <p className="ox-card-sub">Share of the {fmt(totalRemaining)} still owed</p>
-                    </div>
-                  </div>
-                  <SegmentBar items={oweItems} onPick={openLoan} />
-                </section>
-              )}
-
-              {activeIncomes.length > 0 && (
-                <button className="ox-card tap ox-rise" style={{ "--i": 4, textAlign: "left", color: "inherit", width: "100%" }} onClick={() => go("income")}>
-                  <div className="ox-card-head" style={{ marginBottom: 6 }}>
-                    <h2 className="ox-card-title">Income · {monthKeyShort(asOfKey)}</h2>
-                    <ChevronRight size={16} className="ox-faint" />
-                  </div>
-                  <p className={"ox-amount-md" + (recordedThisMonth.length > 0 && profitThisMonth < 0 ? " ox-neg" : "")}>
-                    {recordedThisMonth.length > 0 ? <Amount value={profitThisMonth} signed /> : "Nothing recorded yet"}
-                  </p>
-                  <p className="fl-card-sub">
-                    {usualProfitTotal >= 0 ? `Usually ${fmt(usualProfitTotal)} profit a month` : `Usually ${fmt(-usualProfitTotal)} loss a month`}
-                    {incomeToDebts > 0.5 ? ` · ${fmt(incomeToDebts)} goes to debts` : ""}
-                  </p>
-                </button>
-              )}
             </div>
           </div>
         )}
@@ -5014,6 +5007,8 @@ function Ledger({ user, onAccountDeleted }) {
                 const total = Number(selectedLoan.totalAmount) || 0;
                 const paidPct = total > 0 ? Math.max(Math.min((total - finalBalance) / total, 1), 0) : 0;
                 const recordMonth = (month) => acc.canEdit && setRecordTarget({ kind: "debt", id: selectedLoan.id, month });
+                // Interest + a payment term: the whole cost if it's cleared by the end of the term.
+                const payoff = termPayoff(selectedLoan, entries, asOfKey);
 
                 return (
                   <div className="ox-stack">
@@ -5116,6 +5111,23 @@ function Ledger({ user, onAccountDeleted }) {
                           {termSummary(selectedLoan, asOfKey)}
                         </p>
                       ) : null}
+                      {payoff && payoff.balance > 0.5 && (
+                        <div className="ox-payoff">
+                          <div className="ox-payoff-row">
+                            <span className="fl-stat-label">
+                              {payoff.paymentsLeft > 0 ? `Total payable by ${monthKeyShort(payoff.endKey)}` : "Total payable"}
+                            </span>
+                            <span className="fl-stat-value">{fmt(payoff.total)}</span>
+                          </div>
+                          <p className="fl-card-sub">
+                            {(payoff.paymentsLeft > 0
+                              ? `${fmt(payoff.monthly)} a month for ${payoff.paymentsLeft} month${payoff.paymentsLeft === 1 ? "" : "s"} clears it by then`
+                              : `The term ended in ${monthKeyShort(payoff.endKey)} with ${fmt(payoff.balance)} still owed`) +
+                              (payoff.interest > 0.5 ? ` · ${fmt(payoff.interest)} interest on top of the ${fmt(total)} borrowed` : "") +
+                              "."}
+                          </p>
+                        </div>
+                      )}
                       {selectedLoan.protectFromGrowth && (
                         <p className="fl-card-sub">Protected from growing: the plan always covers at least its interest.</p>
                       )}

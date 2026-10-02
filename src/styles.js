@@ -927,6 +927,16 @@ export const styles = `
   .fl-month-item:last-child { border-bottom: none; }
   .fl-month-item:hover { background: var(--surface-hover); }
   .fl-month-item:disabled { cursor: default; background: none; }
+  /* Overview → This month: the summary above the rows, and "Show all". */
+  .ox-month-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-3); padding: var(--s-5); border-bottom: 1px solid var(--line); }
+  .ox-month-head .ox-amount-lg { margin: 6px 0 2px; }
+  .ox-month-head .fl-card-sub { margin: 0; }
+  .ox-month-more {
+    display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; min-height: 46px;
+    padding: var(--s-3) var(--s-4); border: 0; background: none; cursor: pointer;
+    color: var(--text-2); font: 500 14px var(--font);
+  }
+  .ox-month-more:hover { color: var(--text); background: var(--surface-hover); }
   .fl-month-item-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .fl-month-item-main .fl-list-row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fl-day {
@@ -963,6 +973,11 @@ export const styles = `
   .ox-card-foot { display: flex; justify-content: space-between; gap: var(--s-2); margin-top: var(--s-2); font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 
   /* Detail stats */
+  /* Total payable over a payment term: one figure with its explanation. */
+  .ox-payoff { margin-top: var(--s-4); padding: var(--s-4); border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--line); }
+  .ox-payoff-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; }
+  .ox-payoff .fl-stat-label { margin: 0; }
+  .ox-payoff .fl-card-sub { margin-top: 6px; }
   .fl-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-4) var(--s-3); margin-top: var(--s-5); }
   @media (min-width: 720px) { .fl-detail-grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
   .fl-stat-edit {
