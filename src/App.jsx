@@ -2515,6 +2515,10 @@ function Ledger({ user, onAccountDeleted }) {
   const [showBudgetEditor, setShowBudgetEditor] = useState(false);
   // Overview → This month: the first few rows, or all of them.
   const [showAllMonth, setShowAllMonth] = useState(false);
+  // Debts → Breakdown: split by debt or by type.
+  const [breakdownBy, setBreakdownBy] = useState("debt");
+  // Plan → "See the full plan": the chart, comparison and payoff order.
+  const [planOpen, setPlanOpen] = useState(false);
   const [editingGoal, setEditingGoal] = useState(false);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
@@ -2888,6 +2892,9 @@ function Ledger({ user, onAccountDeleted }) {
         )
       : null;
   const byMonth = (months) => monthKeyShort(monthKeyAdd(asOfKey, months - 1));
+  const planReady = strategyLoans.length > 0 && !!strategyResult && strategyResult.feasible;
+  // The current pace can only be compared when it gets every debt paid off.
+  const planBeatsPace = planReady && !!statusQuoResult && statusQuoResult.stalled.length === 0;
   const goalBlock =
     strategyLoans.length === 0 ? null : editingGoal ? (
       <DebtFreeGoalForm
@@ -3528,82 +3535,53 @@ function Ledger({ user, onAccountDeleted }) {
                     <span>of {fmt(l.totalAmount)}</span>
                     <span>{Math.round(pct * 100)}% repaid</span>
                   </div>
-                  {(categoryLabel(l.category) ||
-                    !access(l.id).owner ||
-                    access(l.id).shares.length > 0 ||
-                    l.protectFromGrowth ||
-                    l.isPaidThisMonth ||
-                    l.isOverdue ||
-                    l.isDueSoon ||
-                    l.missedMonths.length > 0 ||
-                    l.shortThisMonth > 0.5 ||
-                    l.behindPlan > 0.5) && (
-                    <div className="fl-chip-row">
-                      {categoryLabel(l.category) && <span className="fl-chip chip-tag">{categoryLabel(l.category)}</span>}
-                      <SharedChip a={access(l.id)} />
-                      {l.protectFromGrowth && <span className="fl-chip chip-blue">protected</span>}
-                      {l.isPaidThisMonth && (
-                        <span className="fl-chip chip-green">
-                          <Check size={12} /> Paid {monthKeyShort(asOfKey)}
-                        </span>
-                      )}
-                      {l.isOverdue && (
-                        <span
-                          className="fl-overdue fl-tap"
-                          style={{ marginTop: 0 }}
-                          onClick={(e) => {
-                            if (!access(l.id).canEdit) return;
-                            e.stopPropagation();
-                            openRecord("debt", l.id);
-                          }}
-                        >
-                          <AlertCircle size={12} /> Payment overdue for {monthKeyLabel(asOfKey)}
-                          {payableThisMonth(l)
-                            ? ` · ${payableThisMonth(l).fromPlan ? "plan " : ""}${fmt(payableThisMonth(l).amount)}`
-                            : ""}
-                        </span>
-                      )}
-                      {l.isDueSoon &&
-                        (() => {
-                          const when = l.daysUntilDue === 0 ? "today" : `in ${l.daysUntilDue} day${l.daysUntilDue === 1 ? "" : "s"}`;
-                          const pay = payableThisMonth(l);
-                          return (
-                            <span
-                              className="fl-chip chip-grey fl-tap"
-                              onClick={(e) => {
-                                if (!access(l.id).canEdit) return;
-                                e.stopPropagation();
-                                openRecord("debt", l.id);
-                              }}
-                            >
-                              {!pay
-                                ? `Due ${when}`
-                                : pay.fromPlan
-                                ? `Due ${when} · plan ${fmt(pay.amount)}`
-                                : `${fmt(pay.amount)} due ${when}`}
-                            </span>
-                          );
-                        })()}
-                      {l.missedMonths.length > 0 && (
-                        <span className="fl-overdue" style={{ marginTop: 0 }}>
-                          <AlertCircle size={12} />{" "}
-                          {l.missedMonths.length === 1
-                            ? `Missed ${monthKeyShort(l.missedMonths[0].key)}`
-                            : `${l.missedMonths.length} months missed`}
-                        </span>
-                      )}
-                      {l.shortThisMonth > 0.5 && (
-                        <span className="fl-overdue" style={{ marginTop: 0 }}>
-                          <AlertCircle size={12} /> {fmt(l.shortThisMonth)} short for {monthKeyShort(asOfKey)}
-                        </span>
-                      )}
-                      {l.behindPlan > 0.5 && (
-                        <span className="fl-overdue" style={{ marginTop: 0 }}>
-                          <AlertCircle size={12} /> {fmt(l.behindPlan)} behind plan
-                        </span>
-                      )}
-                    </div>
-                  )}
+                  {/* One status at most, the most urgent, so a card reads at a glance.
+                      "Protected" and the rest are on the debt's own page. */}
+                  {(() => {
+                    const tapToRecord = (e) => {
+                      if (!access(l.id).canEdit) return;
+                      e.stopPropagation();
+                      openRecord("debt", l.id);
+                    };
+                    const pay = payableThisMonth(l);
+                    const when = l.daysUntilDue === 0 ? "today" : `in ${l.daysUntilDue} day${l.daysUntilDue === 1 ? "" : "s"}`;
+                    const status = l.isOverdue ? (
+                      <span className="fl-overdue fl-tap" style={{ marginTop: 0 }} onClick={tapToRecord}>
+                        <AlertCircle size={12} /> Overdue for {monthKeyShort(asOfKey)}
+                        {pay ? ` · ${pay.fromPlan ? "plan " : ""}${fmt(pay.amount)}` : ""}
+                      </span>
+                    ) : l.missedMonths.length > 0 ? (
+                      <span className="fl-overdue" style={{ marginTop: 0 }}>
+                        <AlertCircle size={12} />{" "}
+                        {l.missedMonths.length === 1 ? `Missed ${monthKeyShort(l.missedMonths[0].key)}` : `${l.missedMonths.length} months missed`}
+                      </span>
+                    ) : l.shortThisMonth > 0.5 ? (
+                      <span className="fl-overdue" style={{ marginTop: 0 }}>
+                        <AlertCircle size={12} /> {fmt(l.shortThisMonth)} short for {monthKeyShort(asOfKey)}
+                      </span>
+                    ) : l.behindPlan > 0.5 ? (
+                      <span className="fl-overdue" style={{ marginTop: 0 }}>
+                        <AlertCircle size={12} /> {fmt(l.behindPlan)} behind plan
+                      </span>
+                    ) : l.isDueSoon ? (
+                      <span className="fl-chip chip-grey fl-tap" onClick={tapToRecord}>
+                        {!pay ? `Due ${when}` : pay.fromPlan ? `Due ${when} · plan ${fmt(pay.amount)}` : `${fmt(pay.amount)} due ${when}`}
+                      </span>
+                    ) : l.isPaidThisMonth ? (
+                      <span className="fl-chip chip-green">
+                        <Check size={12} /> Paid {monthKeyShort(asOfKey)}
+                      </span>
+                    ) : null;
+                    const a = access(l.id);
+                    if (!categoryLabel(l.category) && a.owner && a.shares.length === 0 && !status) return null;
+                    return (
+                      <div className="fl-chip-row">
+                        {categoryLabel(l.category) && <span className="fl-chip chip-tag">{categoryLabel(l.category)}</span>}
+                        <SharedChip a={a} />
+                        {status}
+                      </div>
+                    );
+                  })()}
                 </div>
               );
   }
@@ -4080,28 +4058,33 @@ function Ledger({ user, onAccountDeleted }) {
                   <div>{lenderSummaries.map((l, i) => renderDebtCard(l, i))}</div>
                 </div>
                 <div className="ox-stack">
-                  {oweItems.length > 1 && (
-                    <section className="ox-card ox-rise" style={{ "--i": 2 }}>
-                      <div className="ox-card-head">
-                        <div>
-                          <h2 className="ox-card-title">Where you owe</h2>
-                          <p className="ox-card-sub">Share of what’s still owed</p>
-                        </div>
-                      </div>
-                      <SegmentBar items={oweItems} onPick={openLoan} />
-                    </section>
-                  )}
-                  {debtTypeItems.length > 1 && (
-                    <section className="ox-card ox-rise" style={{ "--i": 3 }}>
-                      <div className="ox-card-head">
-                        <div>
-                          <h2 className="ox-card-title">By type</h2>
-                          <p className="ox-card-sub">What kind of debt it is</p>
-                        </div>
-                      </div>
-                      <SegmentBar items={debtTypeItems} />
-                    </section>
-                  )}
+                  {(oweItems.length > 1 || debtTypeItems.length > 1) &&
+                    (() => {
+                      const both = oweItems.length > 1 && debtTypeItems.length > 1;
+                      const byType = both ? breakdownBy === "type" : debtTypeItems.length > 1;
+                      return (
+                        <section className="ox-card ox-rise" style={{ "--i": 2 }}>
+                          <div className="ox-card-head">
+                            <div>
+                              <h2 className="ox-card-title">Breakdown</h2>
+                              <p className="ox-card-sub">{byType ? "What kind of debt it is" : "Share of what’s still owed"}</p>
+                            </div>
+                          </div>
+                          {both && (
+                            <div className="ox-seg" role="radiogroup" aria-label="Break down by" style={{ marginBottom: 16 }}>
+                              <span className="ox-seg-pill" style={{ transform: byType ? "translateX(100%)" : "none" }} />
+                              <button role="radio" aria-checked={!byType} className={!byType ? "on" : ""} onClick={() => setBreakdownBy("debt")}>
+                                By debt
+                              </button>
+                              <button role="radio" aria-checked={byType} className={byType ? "on" : ""} onClick={() => setBreakdownBy("type")}>
+                                By type
+                              </button>
+                            </div>
+                          )}
+                          {byType ? <SegmentBar items={debtTypeItems} /> : <SegmentBar items={oweItems} onPick={openLoan} />}
+                        </section>
+                      );
+                    })()}
                 </div>
               </div>
             ) : (
@@ -4120,13 +4103,24 @@ function Ledger({ user, onAccountDeleted }) {
           </>
         )}
 
+        {/* Income: the usual profit, then the sources (what you tap), then the chart. */}
         {view === "income" && (
           <>
             {incomes.length > 0 ? (
               <div className="ox-grid two">
                 <div className="ox-stack">
                   <section className="ox-card ox-hero ox-rise" style={{ "--i": 0 }}>
-                    <p className="ox-label">Usual profit a month</p>
+                    <div className="ox-card-head" style={{ marginBottom: 0 }}>
+                      <p className="ox-label">Usual profit a month</p>
+                      {activeIncomes.length > 0 && (
+                        <span
+                          className={"fl-chip " + (recordedThisMonth.length === activeIncomes.length ? "chip-green" : "chip-grey")}
+                          style={{ marginTop: 0 }}
+                        >
+                          {recordedThisMonth.length} of {activeIncomes.length} recorded for {monthKeyShort(asOfKey).split(" ")[0]}
+                        </span>
+                      )}
+                    </div>
                     <p className={"ox-amount-lg" + (usualProfitTotal < 0 ? " ox-neg" : "")}>
                       <Amount value={usualProfitTotal} signed />
                     </p>
@@ -4150,50 +4144,19 @@ function Ledger({ user, onAccountDeleted }) {
                         </div>
                       </>
                     )}
-                    <div className="fl-budget-breakdown">
-                      <div className="fl-budget-line">
-                        <span>Profit so far (recorded months)</span>
-                        <span className="fl-mono">{signedFmt(incomeProfitSoFar)}</span>
-                      </div>
-                      <div className="fl-budget-line">
-                        <span>
-                          {monthKeyLabel(asOfKey)} · {recordedThisMonth.length} of {activeIncomes.length} recorded
-                        </span>
-                        <span className="fl-mono">{recordedThisMonth.length > 0 ? signedFmt(profitThisMonth) : "—"}</span>
-                      </div>
-                      {incomeToDebts > 0.5 && (
-                        <div className="fl-budget-line">
-                          <span>Goes toward debts each month</span>
-                          <span className="fl-mono">{fmt(incomeToDebts)}</span>
-                        </div>
-                      )}
-                    </div>
+                    <p className="fl-card-sub" style={{ marginTop: 14 }}>
+                      {[
+                        `Profit so far ${signedFmt(incomeProfitSoFar)}`,
+                        recordedThisMonth.length > 0 ? `${monthKeyShort(asOfKey).split(" ")[0]} ${signedFmt(profitThisMonth)}` : null,
+                        incomeToDebts > 0.5 ? `${fmt(incomeToDebts)} a month goes to debts` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
                   </section>
 
-                  <section className="ox-card ox-rise" style={{ "--i": 1 }}>
-                    <div className="ox-card-head">
-                      <div>
-                        <h2 className="ox-card-title">Income vs expenses</h2>
-                        <p className="ox-card-sub">Recorded months, all sources together</p>
-                      </div>
-                    </div>
-                    {incomeMonths.length > 0 ? (
-                      <BarPairs data={incomeMonths} ariaLabel="Income and expenses for each recorded month" />
-                    ) : (
-                      <div className="ox-empty" style={{ padding: "28px 16px" }}>
-                        <div className="ox-empty-icon">
-                          <TrendingUp size={24} />
-                        </div>
-                        <p className="ox-empty-title">No months recorded yet</p>
-                        <p>Record a month’s income and costs to see how each source is doing.</p>
-                      </div>
-                    )}
-                  </section>
-                </div>
-
-                <div className="ox-stack">
                   <p className="ox-section">Your income sources</p>
-                  <div className="ox-list ox-rise" style={{ "--i": 2 }}>
+                  <div className="ox-list ox-rise" style={{ "--i": 1 }}>
                     {incomeSummaries.map((src) => (
                       <button key={src.id} className="ox-row" onClick={() => openIncome(src.id)}>
                         <span className="ox-row-icon accent">
@@ -4222,6 +4185,28 @@ function Ledger({ user, onAccountDeleted }) {
                       </button>
                     ))}
                   </div>
+                </div>
+
+                <div className="ox-stack">
+                  <section className="ox-card ox-rise" style={{ "--i": 2 }}>
+                    <div className="ox-card-head">
+                      <div>
+                        <h2 className="ox-card-title">Income vs expenses</h2>
+                        <p className="ox-card-sub">Recorded months, all sources together</p>
+                      </div>
+                    </div>
+                    {incomeMonths.length > 0 ? (
+                      <BarPairs data={incomeMonths} ariaLabel="Income and expenses for each recorded month" />
+                    ) : (
+                      <div className="ox-empty" style={{ padding: "28px 16px" }}>
+                        <div className="ox-empty-icon">
+                          <TrendingUp size={24} />
+                        </div>
+                        <p className="ox-empty-title">No months recorded yet</p>
+                        <p>Record a month’s income and costs to see how each source is doing.</p>
+                      </div>
+                    )}
+                  </section>
                 </div>
               </div>
             ) : (
@@ -4714,23 +4699,23 @@ function Ledger({ user, onAccountDeleted }) {
         )}
 
         {view === "strategy" && (
-          <div className="ox-grid two">
-            <div className="ox-stack">
-              {strategyLoans.length === 0 && (
-                <div className="ox-empty ox-rise">
-                  <div className="ox-empty-icon">
-                    <Target size={24} />
+          <>
+            <div className="ox-grid two">
+              <div className="ox-stack">
+                {strategyLoans.length === 0 && (
+                  <div className="ox-empty ox-rise">
+                    <div className="ox-empty-icon">
+                      <Target size={24} />
+                    </div>
+                    <p className="ox-empty-title">Nothing to plan</p>
+                    <p>Every debt is paid off, or none are added yet.</p>
+                    <button className="fl-btn" onClick={() => setShowAddLoan(true)}>
+                      <Plus size={16} /> Add a debt
+                    </button>
                   </div>
-                  <p className="ox-empty-title">Nothing to plan</p>
-                  <p>Every debt is paid off, or none are added yet.</p>
-                  <button className="fl-btn" onClick={() => setShowAddLoan(true)}>
-                    <Plus size={16} /> Add a debt
-                  </button>
-                </div>
-              )}
+                )}
 
-              {strategyLoans.length > 0 && strategyResult && !strategyResult.feasible && (
-                <>
+                {strategyLoans.length > 0 && strategyResult && !strategyResult.feasible && (
                   <div className="ox-banner error ox-rise">
                     <AlertCircle size={18} />
                     <span>
@@ -4738,246 +4723,255 @@ function Ledger({ user, onAccountDeleted }) {
                       least {fmt(strategyResult.minRequired)} a month before a plan can be made.
                     </span>
                   </div>
-                  {goalBlock}
-                </>
-              )}
+                )}
 
-              {strategyLoans.length > 0 && strategyResult && strategyResult.feasible && (
-                <>
-                  <section className="ox-card ox-hero ox-rise" style={{ "--i": 0 }}>
-                    <div className="ox-card-head" style={{ marginBottom: 0 }}>
+                {planReady && (
+                  <>
+                    <section className="ox-card ox-hero ox-rise" style={{ "--i": 0 }}>
                       <p className="ox-label">Debt-free in</p>
-                      <span className="fl-chip chip-accent">{strategy.type === "avalanche" ? "Avalanche" : "Snowball"}</span>
-                    </div>
-                    <p className="ox-amount-xl">{monthsLabel(strategyResult.months)}</p>
-                    <p className="fl-card-sub" style={{ marginTop: 6 }}>
-                      by {monthKeyLabel(monthKeyAdd(asOfKey, strategyResult.months - 1))} ·{" "}
-                      <span className="ox-neg">{fmt(strategyResult.totalInterest)}</span> in interest
-                    </p>
-                    {statusQuoResult && statusQuoResult.stalled.length === 0 && (
-                      <>
-                        <div className="ox-compare">
-                          <p className="ox-label" style={{ marginBottom: -4 }}>
-                            Time to debt-free
-                          </p>
-                          {[
-                            ["Your plan", strategyResult.months, true],
-                            ["Current pace", statusQuoResult.months, false],
-                          ].map(([label, m, mine]) => (
-                            <div className="ox-compare-row" key={label}>
-                              <span>{label}</span>
-                              <div className="ox-compare-track">
-                                <div
-                                  className={"ox-compare-fill" + (mine ? " accent" : "")}
-                                  style={{ width: (m / Math.max(strategyResult.months, statusQuoResult.months, 1)) * 100 + "%" }}
-                                />
-                              </div>
-                              <span className="ox-compare-val">{monthsLabel(m)}</span>
-                            </div>
-                          ))}
-                          <p className="ox-label" style={{ margin: "8px 0 -4px" }}>
-                            Interest paid
-                          </p>
-                          {[
-                            ["Your plan", strategyResult.totalInterest, true],
-                            ["Current pace", statusQuoResult.totalInterest, false],
-                          ].map(([label, v, mine]) => (
-                            <div className="ox-compare-row" key={label}>
-                              <span>{label}</span>
-                              <div className="ox-compare-track">
-                                <div
-                                  className={"ox-compare-fill" + (mine ? " accent" : "")}
-                                  style={{
-                                    width:
-                                      (v / Math.max(strategyResult.totalInterest, statusQuoResult.totalInterest, 1)) * 100 + "%",
-                                  }}
-                                />
-                              </div>
-                              <span className="ox-compare-val">{fmt(v)}</span>
-                            </div>
-                          ))}
-                        </div>
-                        {statusQuoResult.totalInterest - strategyResult.totalInterest > 1 && (
-                          <p className="fl-card-sub" style={{ marginTop: 14 }}>
-                            This plan saves about{" "}
-                            <strong className="ox-pos">{fmt(statusQuoResult.totalInterest - strategyResult.totalInterest)}</strong> in interest
-                            {statusQuoResult.months > strategyResult.months
-                              ? ` and gets you debt-free ${statusQuoResult.months - strategyResult.months} months sooner`
-                              : ""}
-                            .
-                          </p>
-                        )}
-                      </>
-                    )}
-                    {statusQuoResult && statusQuoResult.stalled.length > 0 && (
-                      <p className="fl-card-sub" style={{ marginTop: 14 }}>
-                        At least one debt isn’t being paid enough to cover its own interest, so at today’s pace it would never
-                        be paid off. This plan is the way forward.
+                      <p className="ox-amount-xl">{monthsLabel(strategyResult.months)}</p>
+                      <p className="fl-card-sub" style={{ marginTop: 6 }}>
+                        by {monthKeyLabel(monthKeyAdd(asOfKey, strategyResult.months - 1))} ·{" "}
+                        <span className="ox-neg">{fmt(strategyResult.totalInterest)}</span> in interest
                       </p>
-                    )}
-                  </section>
-
-                  {payoffPoints && (
-                    <section className="ox-card ox-rise" style={{ "--i": 1 }}>
-                      <div className="ox-card-head">
-                        <div>
-                          <h2 className="ox-card-title">Path to debt-free</h2>
-                          <p className="ox-card-sub">Total owed each month on this plan</p>
-                        </div>
-                      </div>
-                      <AreaChart
-                        points={payoffPoints}
-                        endMarker
-                        height={220}
-                        tipValue={(v) => (v < 0.5 ? "Debt-free" : fmt(v) + " left")}
-                        ariaLabel={`Projected total owed falls to zero by ${byMonth(strategyResult.months)}`}
-                      />
+                      {planBeatsPace && statusQuoResult.totalInterest - strategyResult.totalInterest > 1 && (
+                        <p className="fl-card-sub" style={{ marginTop: 14 }}>
+                          That’s{" "}
+                          <strong className="ox-pos">{fmt(statusQuoResult.totalInterest - strategyResult.totalInterest)}</strong> less
+                          interest
+                          {statusQuoResult.months > strategyResult.months
+                            ? ` and ${monthsLabel(statusQuoResult.months - strategyResult.months)} sooner`
+                            : ""}{" "}
+                          than at your current pace.
+                        </p>
+                      )}
+                      {statusQuoResult && statusQuoResult.stalled.length > 0 && (
+                        <p className="fl-card-sub" style={{ marginTop: 14 }}>
+                          At least one debt isn’t being paid enough to cover its own interest, so at today’s pace it would never
+                          be paid off. This plan is the way forward.
+                        </p>
+                      )}
                     </section>
-                  )}
 
-                  <div className="ox-rise" style={{ "--i": 2 }}>{goalBlock}</div>
-
-                  <div>
-                    <p className="ox-section">
-                      Pay this for {monthKeyLabel(asOfKey)}
-                      <span className="ox-faint" style={{ fontWeight: 500 }}>
-                        {fmt(Object.values(strategyResult.firstMonthPlan).reduce((sum, v) => sum + v, 0))}
-                      </span>
-                    </p>
-                    <div className="ox-list ox-rise" style={{ "--i": 3 }}>
-                      {strategyLoans
-                        .slice()
-                        .sort((x, y) => (strategyResult.firstMonthPlan[y.id] || 0) - (strategyResult.firstMonthPlan[x.id] || 0))
-                        .map((l) => (
-                          <button key={l.id} className="ox-row" onClick={() => openLoan(l.id)}>
-                            <span className="ox-row-main">
-                              <span className="ox-row-name">{l.name}</span>
-                              <span className="ox-row-sub">
-                                {l.schedule ? "repayment plan" : `${(l.rate * 100).toFixed(2)}% a year`} · {fmt(l.balance)} owed
-                                {l.protectFromGrowth ? " · protected" : ""}
-                              </span>
-                            </span>
-                            <span className="ox-row-end">
-                              <span className="ox-row-amount">{fmt(strategyResult.firstMonthPlan[l.id] || 0)}</span>
-                            </span>
-                          </button>
-                        ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <p className="ox-section">Payoff order</p>
-                    <div className="ox-card ox-rise" style={{ "--i": 4 }}>
-                      <div className="ox-timeline">
+                    <div>
+                      <p className="ox-section">
+                        Pay this for {monthKeyLabel(asOfKey)}
+                        <span className="ox-faint" style={{ fontWeight: 500 }}>
+                          {fmt(Object.values(strategyResult.firstMonthPlan).reduce((sum, v) => sum + v, 0))}
+                        </span>
+                      </p>
+                      <div className="ox-list ox-rise" style={{ "--i": 1 }}>
                         {strategyLoans
                           .slice()
-                          .sort((x, y) => (strategyResult.payoffMonth[x.id] || 9999) - (strategyResult.payoffMonth[y.id] || 9999))
+                          .sort((x, y) => (strategyResult.firstMonthPlan[y.id] || 0) - (strategyResult.firstMonthPlan[x.id] || 0))
                           .map((l) => (
-                            <div className="ox-tl-item" key={l.id}>
-                              <span>{l.name}</span>
-                              <span className="ox-tl-when">
-                                {strategyResult.payoffMonth[l.id]
-                                  ? `${byMonth(strategyResult.payoffMonth[l.id])} · ${monthsLabel(strategyResult.payoffMonth[l.id])}`
-                                  : "not within 50 years"}
+                            <button key={l.id} className="ox-row" onClick={() => openLoan(l.id)}>
+                              <span className="ox-row-main">
+                                <span className="ox-row-name">{l.name}</span>
+                                <span className="ox-row-sub">
+                                  {l.schedule ? "repayment plan" : l.rate > 0 ? `${(l.rate * 100).toFixed(2)}% a year` : "no interest"} ·{" "}
+                                  {fmt(l.balance)} owed
+                                </span>
                               </span>
-                            </div>
+                              <span className="ox-row-end">
+                                <span className="ox-row-amount">{fmt(strategyResult.firstMonthPlan[l.id] || 0)}</span>
+                              </span>
+                            </button>
                           ))}
                       </div>
                     </div>
+
+                  </>
+                )}
+              </div>
+
+              <div className="ox-stack">
+                <section className="ox-card ox-rise" style={{ "--i": 1 }}>
+                  <div className="ox-card-head" style={{ marginBottom: 0 }}>
+                    <p className="ox-label">Monthly budget for debts</p>
+                    <button className="fl-icon-btn" onClick={() => setShowBudgetEditor(true)} aria-label="Change budget">
+                      <Pencil size={16} />
+                    </button>
                   </div>
-                </>
-              )}
+                  <p className="ox-amount-lg">
+                    <Amount value={effectiveBudget} />
+                  </p>
+                  {nextBudgetRise && (
+                    <p className="fl-card-sub" style={{ marginTop: 6 }}>
+                      Rises to {fmt(nextBudgetRise.amount)} from {monthKeyShort(nextBudgetRise.key)} as income grows.
+                    </p>
+                  )}
+                  {(budgetParts.length > 1 || budgetParts.some((pt) => pt.kind === "income")) && (
+                    <div className="fl-budget-breakdown">
+                      {budgetParts.map((pt) => (
+                        <div className="fl-budget-line" key={pt.id}>
+                          <span>
+                            {pt.kind === "income"
+                              ? `${incomesById[pt.incomeId] ? incomesById[pt.incomeId].name : "Removed income source"} · ${shareLabel(pt.share)}${
+                                  incomesById[pt.incomeId] && hasIncomeGrowth(incomesById[pt.incomeId])
+                                    ? ` · rises ${incomeGrowthLabel(incomesById[pt.incomeId].growth)}`
+                                    : ""
+                                }`
+                              : pt.label}
+                          </span>
+                          <span className="fl-mono">{fmt(budgetPartAmount(pt, incomesById, asOfKey))}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {activeIncomes.length > 0 && usualProfitTotal > 0.5 && incomeToDebts <= 0.5 && (
+                    <p className="fl-card-sub" style={{ marginTop: 12 }}>
+                      Your income sources usually make {fmt(usualProfitTotal)} profit a month. None of it is in this budget yet.
+                    </p>
+                  )}
+                </section>
+
+                {goalBlock && (
+                  <div className="ox-goal ox-rise" style={{ "--i": 2 }}>
+                    {goalBlock}
+                  </div>
+                )}
+
+                <section className="ox-card ox-rise" style={{ "--i": 3 }}>
+                  <p className="ox-label" style={{ marginBottom: 12 }}>
+                    Which debt gets the extra
+                  </p>
+                  <div className="ox-seg" role="radiogroup" aria-label="Strategy">
+                    <span className="ox-seg-pill" style={{ transform: strategy.type === "snowball" ? "translateX(100%)" : "none" }} />
+                    <button
+                      role="radio"
+                      aria-checked={strategy.type === "avalanche"}
+                      className={strategy.type === "avalanche" ? "on" : ""}
+                      onClick={() => strategy.type !== "avalanche" && updateStrategy({ type: "avalanche" })}
+                    >
+                      Avalanche
+                    </button>
+                    <button
+                      role="radio"
+                      aria-checked={strategy.type === "snowball"}
+                      className={strategy.type === "snowball" ? "on" : ""}
+                      onClick={() => strategy.type !== "snowball" && updateStrategy({ type: "snowball" })}
+                    >
+                      Snowball
+                    </button>
+                  </div>
+                  <p className="fl-card-sub" style={{ marginTop: 12 }}>
+                    {strategy.type === "avalanche"
+                      ? "Highest interest first: saves the most money overall."
+                      : "Smallest balance first: clears individual debts fastest."}
+                  </p>
+                </section>
+
+              </div>
             </div>
 
-            <div className="ox-stack">
-              <section className="ox-card ox-rise" style={{ "--i": 1 }}>
-                <div className="ox-card-head" style={{ marginBottom: 0 }}>
-                  <p className="ox-label">Monthly budget for debts</p>
-                  <button className="fl-icon-btn" onClick={() => setShowBudgetEditor(true)} aria-label="Edit budget">
-                    <Pencil size={16} />
-                  </button>
-                </div>
-                <p className="ox-amount-lg">
-                  <Amount value={effectiveBudget} />
-                </p>
-                {nextBudgetRise && (
-                  <p className="fl-card-sub" style={{ marginTop: 6 }}>
-                    Rises to {fmt(nextBudgetRise.amount)} from {monthKeyShort(nextBudgetRise.key)} as income grows. The plan counts
-                    every future rise.
-                  </p>
-                )}
-                {(budgetParts.length > 1 || budgetParts.some((pt) => pt.kind === "income")) && (
-                  <div className="fl-budget-breakdown">
-                    {budgetParts.map((pt) => (
-                      <div className="fl-budget-line" key={pt.id}>
-                        <span>
-                          {pt.kind === "income"
-                            ? `${incomesById[pt.incomeId] ? incomesById[pt.incomeId].name : "Removed income source"} · ${shareLabel(pt.share)}${
-                                incomesById[pt.incomeId] && hasIncomeGrowth(incomesById[pt.incomeId])
-                                  ? ` · rises ${incomeGrowthLabel(incomesById[pt.incomeId].growth)}`
-                                  : ""
-                              }`
-                            : pt.label}
-                        </span>
-                        <span className="fl-mono">{fmt(budgetPartAmount(pt, incomesById, asOfKey))}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {activeIncomes.length > 0 && (
-                  <p className="fl-card-sub" style={{ marginTop: 12 }}>
-                    {usualProfitTotal < 0
-                      ? `Your income sources usually run at a ${fmt(-usualProfitTotal)} loss a month.`
-                      : incomeToDebts > 0.5
-                      ? `Your income sources usually make ${fmt(usualProfitTotal)} profit a month; ${fmt(incomeToDebts)} of it goes toward debts.`
-                      : `Your income sources usually make ${fmt(usualProfitTotal)} profit a month. None of it is in this budget yet: edit the budget to add a share.`}
-                  </p>
-                )}
-                <div className="fl-form-actions" style={{ marginTop: 16 }}>
-                  <button className="fl-btn secondary" onClick={() => setShowBudgetEditor(true)}>
-                    <Pencil size={16} /> Change budget
-                  </button>
-                </div>
-              </section>
+            {planReady && (
+              <div className="ox-fold">
+                <button className="ox-fold-btn" aria-expanded={planOpen} onClick={() => setPlanOpen(!planOpen)}>
+                  {planOpen ? "Hide the full plan" : "See the full plan"}
+                  <ChevronDown size={16} />
+                </button>
+                {planOpen && (
+                  <div className="ox-grid two">
+                    <div className="ox-stack">
+                      {payoffPoints && (
+                        <section className="ox-card ox-rise" style={{ "--i": 0 }}>
+                          <div className="ox-card-head">
+                            <div>
+                              <h2 className="ox-card-title">Path to debt-free</h2>
+                              <p className="ox-card-sub">Total owed each month on this plan</p>
+                            </div>
+                          </div>
+                          <AreaChart
+                            points={payoffPoints}
+                            endMarker
+                            height={220}
+                            tipValue={(v) => (v < 0.5 ? "Debt-free" : fmt(v) + " left")}
+                            ariaLabel={`Projected total owed falls to zero by ${byMonth(strategyResult.months)}`}
+                          />
+                        </section>
+                      )}
 
-              <section className="ox-card ox-rise" style={{ "--i": 2 }}>
-                <p className="ox-label" style={{ marginBottom: 12 }}>
-                  Which debt gets the extra
-                </p>
-                <div className="ox-seg" role="radiogroup" aria-label="Strategy">
-                  <span className="ox-seg-pill" style={{ transform: strategy.type === "snowball" ? "translateX(100%)" : "none" }} />
-                  <button
-                    role="radio"
-                    aria-checked={strategy.type === "avalanche"}
-                    className={strategy.type === "avalanche" ? "on" : ""}
-                    onClick={() => strategy.type !== "avalanche" && updateStrategy({ type: "avalanche" })}
-                  >
-                    Avalanche
-                  </button>
-                  <button
-                    role="radio"
-                    aria-checked={strategy.type === "snowball"}
-                    className={strategy.type === "snowball" ? "on" : ""}
-                    onClick={() => strategy.type !== "snowball" && updateStrategy({ type: "snowball" })}
-                  >
-                    Snowball
-                  </button>
-                </div>
-                <p className="fl-card-sub" style={{ marginTop: 12 }}>
-                  {strategy.type === "avalanche"
-                    ? "Highest interest first: saves the most money overall."
-                    : "Smallest balance first: clears individual debts fastest."}
-                </p>
-              </section>
-
-              <p className="fl-card-sub" style={{ margin: "4px 4px 0", lineHeight: 1.6 }}>
-                Set each debt’s minimum monthly payment from its edit form: leave it at 0 for flexible, informal ones, or turn on
+                      {planBeatsPace && (
+                        <section className="ox-card ox-rise" style={{ "--i": 1 }}>
+                          <h2 className="ox-card-title">Your plan against your current pace</h2>
+                            <div className="ox-compare" style={{ marginTop: 12 }}>
+                              <p className="ox-label" style={{ marginBottom: -4 }}>
+                                Time to debt-free
+                              </p>
+                              {[
+                                ["Your plan", strategyResult.months, true],
+                                ["Current pace", statusQuoResult.months, false],
+                              ].map(([label, m, mine]) => (
+                                <div className="ox-compare-row" key={label}>
+                                  <span>{label}</span>
+                                  <div className="ox-compare-track">
+                                    <div
+                                      className={"ox-compare-fill" + (mine ? " accent" : "")}
+                                      style={{ width: (m / Math.max(strategyResult.months, statusQuoResult.months, 1)) * 100 + "%" }}
+                                    />
+                                  </div>
+                                  <span className="ox-compare-val">{monthsLabel(m)}</span>
+                                </div>
+                              ))}
+                              <p className="ox-label" style={{ margin: "8px 0 -4px" }}>
+                                Interest paid
+                              </p>
+                              {[
+                                ["Your plan", strategyResult.totalInterest, true],
+                                ["Current pace", statusQuoResult.totalInterest, false],
+                              ].map(([label, v, mine]) => (
+                                <div className="ox-compare-row" key={label}>
+                                  <span>{label}</span>
+                                  <div className="ox-compare-track">
+                                    <div
+                                      className={"ox-compare-fill" + (mine ? " accent" : "")}
+                                      style={{
+                                        width:
+                                          (v / Math.max(strategyResult.totalInterest, statusQuoResult.totalInterest, 1)) * 100 + "%",
+                                      }}
+                                    />
+                                  </div>
+                                  <span className="ox-compare-val">{fmt(v)}</span>
+                                </div>
+                              ))}
+                            </div>
+                        </section>
+                      )}
+                    </div>
+                    <div className="ox-stack">
+                      <section className="ox-card ox-rise" style={{ "--i": 1 }}>
+                        <h2 className="ox-card-title" style={{ marginBottom: 14 }}>
+                          Payoff order
+                        </h2>
+                        <div className="ox-timeline">
+                          {strategyLoans
+                            .slice()
+                            .sort((x, y) => (strategyResult.payoffMonth[x.id] || 9999) - (strategyResult.payoffMonth[y.id] || 9999))
+                            .map((l) => (
+                              <div className="ox-tl-item" key={l.id}>
+                                <span>{l.name}</span>
+                                <span className="ox-tl-when">
+                                  {strategyResult.payoffMonth[l.id]
+                                    ? `${byMonth(strategyResult.payoffMonth[l.id])} · ${monthsLabel(strategyResult.payoffMonth[l.id])}`
+                                    : "not within 50 years"}
+                                </span>
+                              </div>
+                            ))}
+                        </div>
+                      </section>
+                      <p className="fl-card-sub" style={{ margin: "4px 4px 0", lineHeight: 1.6 }}>
+                        The plan counts every future rise in your budget. Set each debt’s minimum monthly payment from its edit form: leave it at 0 for flexible, informal ones, or turn on
                 “protect from growing” for a debt that must never pile up interest while it waits its turn. A debt on a repayment
                 plan only ever gets what’s due that month, since paying it early doesn’t reduce its total. This isn’t financial
                 advice; check things like tax benefits or prepayment penalties before making big changes.
-              </p>
-            </div>
-          </div>
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
         )}
 
         {view === "loanDetail" && selectedLoan && (

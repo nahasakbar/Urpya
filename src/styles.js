@@ -937,6 +937,19 @@ export const styles = `
     color: var(--text-2); font: 500 14px var(--font);
   }
   .ox-month-more:hover { color: var(--text); background: var(--surface-hover); }
+
+  /* Plan → "See the full plan": the detail stays closed until it's asked for. */
+  .ox-fold { margin-top: var(--s-4); display: flex; flex-direction: column; gap: var(--s-4); }
+  .ox-fold-btn {
+    display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 48px;
+    padding: var(--s-3) var(--s-4); border: 1px solid var(--line); border-radius: var(--r-md);
+    background: var(--surface-1); color: var(--text-2); font: 500 14px var(--font); cursor: pointer;
+    transition: color var(--dur-fast), border-color var(--dur-fast), background var(--dur-fast);
+  }
+  .ox-fold-btn:hover { color: var(--text); border-color: var(--line-control); background: var(--surface-hover); }
+  .ox-fold-btn svg { transition: transform var(--dur-base, 220ms) var(--ease-out); }
+  .ox-fold-btn[aria-expanded="true"] svg { transform: rotate(180deg); }
+  .ox-goal > * { margin: 0 !important; }
   .fl-month-item-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .fl-month-item-main .fl-list-row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fl-day {
