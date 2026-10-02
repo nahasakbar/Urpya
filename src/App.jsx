@@ -3507,6 +3507,18 @@ function Ledger({ user, onAccountDeleted }) {
   const monthItemsByNeed = [...thisMonthItems].sort(
     (a, b) => monthRank(a) - monthRank(b) || (a.day || 99) - (b.day || 99) || a.name.localeCompare(b.name)
   );
+  // The words under each name (the amount sits at the row's right edge), and
+  // their colour: green when done, red when late, brighter when due soon.
+  const monthStatus = (x) => {
+    if (x.kind === "income") return x.status === "received" ? ["Received", "pos"] : ["Expected", ""];
+    if (x.status === "paid") return ["Paid", "pos"];
+    if (x.status === "short") return [`Short · ${fmt(x.paid)} paid`, "neg"];
+    if (x.status === "overdue") return ["Overdue", "neg"];
+    if (x.fromPlan) return ["Plan suggests", ""];
+    if (x.daysUntil == null || x.daysUntil < 0) return ["Due this month", ""];
+    const when = x.daysUntil === 0 ? "Due today" : `Due in ${x.daysUntil} day${x.daysUntil === 1 ? "" : "s"}`;
+    return [when, x.status === "soon" ? "soon" : ""];
+  };
   // Show them all when there are only a few; otherwise the first four.
   const MONTH_ROWS = 4;
   const monthItemsShown = showAllMonth || monthItemsByNeed.length <= MONTH_ROWS + 1 ? monthItemsByNeed : monthItemsByNeed.slice(0, MONTH_ROWS);
@@ -3933,48 +3945,14 @@ function Ledger({ user, onAccountDeleted }) {
                       </span>
                       <span className="fl-month-item-main">
                         <span className="fl-list-row-name">{x.name}</span>
-                        <span className="fl-card-sub">
-                          {x.kind === "income"
-                            ? x.status === "received"
-                              ? `${fmt(x.amount)} came in`
-                              : `${fmt(x.amount)} expected`
-                            : x.status === "paid"
-                            ? `${fmt(x.amount)} paid`
-                            : x.status === "short"
-                            ? `${fmt(x.paid)} paid · ${fmt(x.short)} short`
-                            : x.amount == null
-                            ? "Payment due"
-                            : x.fromPlan
-                            ? `Plan suggests ${fmt(x.amount)}`
-                            : `${fmt(x.amount)} due`}
+                        <span className={"fl-card-sub ox-month-status " + monthStatus(x)[1]}>{monthStatus(x)[0]}</span>
+                      </span>
+                      {(x.status === "short" ? x.short : x.amount) != null && (
+                        <span className={"ox-month-amt" + (x.status === "paid" || x.status === "received" ? " done" : "")}>
+                          {x.kind === "income" ? "+" : ""}
+                          {fmt(x.status === "short" ? x.short : x.amount)}
                         </span>
-                      </span>
-                      <span
-                        className={
-                          x.status === "paid" || x.status === "received"
-                            ? "fl-chip chip-green"
-                            : x.status === "overdue" || x.status === "short"
-                            ? "fl-overdue"
-                            : "fl-chip chip-grey"
-                        }
-                        style={{ marginTop: 0 }}
-                      >
-                        {x.status === "paid"
-                          ? "Paid"
-                          : x.status === "received"
-                          ? "In"
-                          : x.status === "overdue"
-                          ? "Overdue"
-                          : x.status === "short"
-                          ? "Short"
-                          : x.status === "soon"
-                          ? x.daysUntil === 0
-                            ? "Today"
-                            : `In ${x.daysUntil} day${x.daysUntil === 1 ? "" : "s"}`
-                          : x.kind === "income"
-                          ? "Expected"
-                          : "Record"}
-                      </span>
+                      )}
                     </button>
                   ))}
                   {monthItemsShown.length < monthItemsByNeed.length && (

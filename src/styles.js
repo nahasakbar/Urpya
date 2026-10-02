@@ -952,6 +952,11 @@ export const styles = `
   .ox-goal > * { margin: 0 !important; }
   .fl-month-item-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .fl-month-item-main .fl-list-row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ox-month-status.pos { color: var(--positive); }
+  .ox-month-status.neg { color: var(--negative); }
+  .ox-month-status.soon { color: var(--text); }
+  .ox-month-amt { flex: none; font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; text-align: right; }
+  .ox-month-amt.done { color: var(--text-3); }
   .fl-day {
     flex-shrink: 0;
     width: 44px;
